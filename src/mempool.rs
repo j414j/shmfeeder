@@ -27,7 +27,8 @@ struct Slot<T> {
 }
 
 pub struct MemPool<T> {
-  buf: Box<[Slot<T>]>,
+  buf: *mut Slot<T>,
+  cap: usize,
   head: AtomicUsize,
 }
 
@@ -43,9 +44,11 @@ impl<T> MemPool<T> {
         next: AtomicUsize::new(i + 1),
       })
     }
+    let ptr = buf.into_boxed_slice().as_mut_ptr();
 
     Self {
-      buf: buf.into_boxed_slice(),
+      buf: ptr,
+      cap: size,
       head: AtomicUsize::new(pack(0, 0)),
     }
   }
@@ -55,17 +58,20 @@ impl<T> MemPool<T> {
     if num_slots < 1 {
       None
     } else {
-      let buffer = unsafe { std::slice::from_raw_parts_mut(buf as *mut Slot<T>, num_slots) };
-      for (i, slot) in buffer.iter_mut().enumerate() {
-        *slot = Slot {
-          elem: UnsafeCell::new(MaybeUninit::uninit()),
-          ref_cnt: AtomicUsize::new(0),
-          next: AtomicUsize::new(i + 1),
+      let buf = buf as *mut Slot<T>;
+      for i in 0..num_slots {
+        unsafe {
+          buf.add(i).write(Slot {
+            elem: UnsafeCell::new(MaybeUninit::uninit()),
+            ref_cnt: AtomicUsize::new(0),
+            next: AtomicUsize::new(i + 1),
+          })
         };
       }
 
       Some(Self {
-        buf: unsafe { Box::from_raw(buffer) },
+        buf,
+        cap: num_slots,
         head: AtomicUsize::new(0),
       })
     }
@@ -91,7 +97,7 @@ impl<T> MemPool<T> {
 
   pub fn try_alloc<'a>(&'a self, handle: &mut SlotHandle<'a, T>) -> Option<TryAllocFailReason> {
     let head = self.head.load(Ordering::Acquire);
-    if unpack(head).1 >= self.buf.len() {
+    if unpack(head).1 >= self.cap {
       return Some(TryAllocFailReason::BufferFull);
     }
 
@@ -108,7 +114,9 @@ impl<T> MemPool<T> {
     handle: &mut SlotHandle<'a, T>,
   ) -> bool {
     let (tag, index) = unpack(head);
-    let next_head = self.buf[index].next.load(Ordering::Acquire);
+    let next_head = unsafe { &*self.buf.add(index) }
+      .next
+      .load(Ordering::Acquire);
     if self
       .head
       .compare_exchange(
@@ -121,11 +129,11 @@ impl<T> MemPool<T> {
     {
       return false;
     }
-    let slot = &self.buf[index];
+    let slot = unsafe { self.buf.add(index) };
 
     *handle = SlotHandle {
       idx: index,
-      elem: slot.elem.get(),
+      elem: unsafe { &*slot }.elem.get(),
       pool: &self,
     };
 
@@ -146,7 +154,7 @@ impl<T> MemPool<T> {
   pub unsafe fn alloc_unchecked<'a>(&'a self, handle: &mut SlotHandle<'a, T>) {
     loop {
       if unsafe { self.try_alloc_unchecked(handle) } {
-        return
+        return;
       }
     }
   }
@@ -154,7 +162,9 @@ impl<T> MemPool<T> {
   fn try_free_unchecked(&self, slot_idx: usize) -> bool {
     let head = self.head.load(Ordering::Acquire);
     let (tag, index) = unpack(head);
-    self.buf[slot_idx].next.store(index, Ordering::Release);
+    unsafe { &*self.buf.add(slot_idx) }
+      .next
+      .store(index, Ordering::Release);
     self
       .head
       .compare_exchange(
@@ -202,7 +212,7 @@ impl<'a, T> SlotHandle<'a, T> {
 
 impl<'a, T> Drop for SlotHandle<'a, T> {
   fn drop(&mut self) {
-    let ref_cnt = self.pool.buf[self.idx]
+    let ref_cnt = unsafe { &*self.pool.buf.add(self.idx) }
       .ref_cnt
       .fetch_sub(1, Ordering::AcqRel);
     if ref_cnt == 0 {
@@ -216,7 +226,7 @@ impl<'a, T> Drop for SlotHandle<'a, T> {
 
 impl<'a, T> Clone for SlotHandle<'a, T> {
   fn clone(&self) -> Self {
-    self.pool.buf[self.idx]
+    unsafe { &*self.pool.buf.add(self.idx) }
       .ref_cnt
       .fetch_add(1, Ordering::AcqRel);
 
