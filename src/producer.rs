@@ -50,7 +50,7 @@ fn try_init_shared_memory(name: &CString, size: usize) -> ShmResult<(ConnectedMe
   }
 }
 
-fn init_queue_at_ptr<T, const MAX_CONSUMERS: usize>(
+fn init_queue_at_ptr<T, const MAX_CONSUMERS: usize, const IS_NEW: bool>(
   ptr: *mut libc::c_void,
   magic: u64,
   version: u64,
@@ -68,11 +68,12 @@ fn init_queue_at_ptr<T, const MAX_CONSUMERS: usize>(
   queue.header.magic = magic;
   queue.header.version = version;
   queue.header.n_slots = num_slots;
-  queue
-    .header
-    .last_committed_slot
-    .store(MAX_CONSUMERS - 1, Ordering::Release);
-
+  if IS_NEW {
+    queue
+      .header
+      .last_committed_slot
+      .store(num_slots - 1, Ordering::Release);
+  }
   let slot_layout = BroadCastQueue::<T>::slot_layout();
   let slot_begin = unsafe { ptr.byte_add(std::mem::size_of::<ShmQueue<MAX_CONSUMERS>>()) };
   // get an aligned pointer to slots array
@@ -128,7 +129,7 @@ where
     libc::memset(ptr, 0, size);
   }
 
-  init_queue_at_ptr::<T, MAX_CONSUMERS>(
+  init_queue_at_ptr::<T, MAX_CONSUMERS, true>(
     ptr,
     magic,
     version,
@@ -141,7 +142,6 @@ where
 }
 
 fn setup_old_memory<T, const MAX_CONSUMERS: usize>(
-  name: &CString,
   fd: i32,
   size: usize,
   magic: u64,
@@ -166,7 +166,6 @@ where
   if ptr == libc::MAP_FAILED {
     unsafe {
       libc::close(fd);
-      libc::shm_unlink(name.as_ptr());
     }
     return Err(io::Error::last_os_error().into());
   }
@@ -204,7 +203,7 @@ where
   }
 
   // ready to take ownership of queue and initialise it as new
-  init_queue_at_ptr::<T, MAX_CONSUMERS>(
+  init_queue_at_ptr::<T, MAX_CONSUMERS, false>(
     ptr,
     magic,
     version,
@@ -280,7 +279,6 @@ where
   mmap_ptr: *mut ShmQueue<MAX_CONSUMERS>,
   mmap_size: usize,
   fd: i32,
-  name: CString,
   #[cfg(not(feature = "no-heartbeats"))]
   liveness_check_periods: u64,
   #[cfg(not(feature = "no-heartbeats"))]
@@ -323,7 +321,6 @@ where
       )?,
 
       ConnectedMemoryType::Old => setup_old_memory::<T, _>(
-        &name,
         fd,
         size,
         magic,
@@ -351,7 +348,6 @@ where
       mmap_ptr: ptr,
       mmap_size: size,
       fd,
-      name,
       write_handle,
       #[cfg(not(feature = "no-consumer-heartbeat"))]
       liveness_tolerance,
@@ -411,7 +407,6 @@ where
     unsafe {
       libc::munmap(self.mmap_ptr as *mut libc::c_void, self.mmap_size);
       libc::close(self.fd);
-      libc::shm_unlink(self.name.as_ptr());
     }
   }
 }

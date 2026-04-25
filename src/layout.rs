@@ -59,7 +59,7 @@ where
   #[cfg(not(feature = "no-heartbeats"))]
   let producer_hb_offset =
     heartbeats_offset + std::mem::offset_of!(Heartbeats<MAX_CONSUMERS>, producer);
-  #[cfg(not(feature="no-consumer-heartbeat"))]
+  #[cfg(not(feature = "no-consumer-heartbeat"))]
   let consumers_hb_offset =
     heartbeats_offset + std::mem::offset_of!(Heartbeats<MAX_CONSUMERS>, consumers);
   let queue_offset = queue.header.queue_offset;
@@ -91,7 +91,7 @@ where
     ),
     #[cfg(not(feature = "no-heartbeats"))]
     (producer_hb_offset, "PRODUCER HEARTBEAT".to_string()),
-    #[cfg(not(feature="no-consumer-heartbeat"))]
+    #[cfg(not(feature = "no-consumer-heartbeat"))]
     (consumers_hb_offset, "CONSUMER HEARTBEATS".to_string()),
     (
       queue_base_offset,
@@ -157,7 +157,10 @@ where
     let line_end = usize::min(line_start + 16, bytes.len());
     let line = &bytes[line_start..line_end];
 
-    print!("{line_start:08x}: ");
+    print!(
+      "{:08x}: ",
+      (queue as *const ShmQueue<MAX_CONSUMERS> as usize) + line_start
+    );
     for idx in 0..16 {
       if let Some(byte) = line.get(idx) {
         print!("{byte:02x} ");

@@ -16,7 +16,6 @@ fn try_init_shared_memory(name: &CString) -> ShmResult<i32> {
 }
 
 fn try_attach_shared_memory<T, const MAX_CONSUMERS: usize>(
-  name: &CString,
   fd: i32,
   magic: u64,
   version: u64,
@@ -40,7 +39,6 @@ where
   if ptr == libc::MAP_FAILED {
     unsafe {
       libc::close(fd);
-      libc::shm_unlink(name.as_ptr());
     }
     return Err(io::Error::last_os_error().into());
   }
@@ -94,7 +92,6 @@ where
         let err = io::Error::last_os_error();
         unsafe {
           libc::close(fd);
-          libc::shm_unlink(name.as_ptr());
         }
         return Err(err.into());
       }
@@ -113,7 +110,6 @@ where
         let err = io::Error::last_os_error();
         unsafe {
           libc::close(fd);
-          libc::shm_unlink(name.as_ptr());
         }
         return Err(err.into());
       }
@@ -217,7 +213,6 @@ where
 
     let fd = try_init_shared_memory(&name)?;
     let (ptr, id) = try_attach_shared_memory::<T, _>(
-      &name,
       fd,
       magic,
       version,

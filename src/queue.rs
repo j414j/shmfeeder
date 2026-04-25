@@ -81,7 +81,14 @@ where
   T: Copy,
 {
   pub fn new(queue: BroadCastQueue<T>) -> Self {
-    Self { queue, seq: 0 }
+    let last_idx = (unsafe { &*queue.last_committed_slot }).load(Ordering::Relaxed);
+    let last_slot = unsafe { &*queue.buf.add(last_idx) };
+    let init_seq = last_slot.seq.load(Ordering::Relaxed).wrapping_add(1);
+
+    Self {
+      queue,
+      seq: init_seq,
+    }
   }
 
   pub fn get_next_buffer(&mut self) -> *mut T {
@@ -92,7 +99,11 @@ where
     let next_slot = unsafe { &*self.queue.buf.add(next_idx) };
 
     // we are about to overwrite an element, call its destructor
-    if self.seq - next_slot.seq.load(Ordering::Relaxed) == self.queue.len_mask + 1 {
+    if self
+      .seq
+      .saturating_sub(next_slot.seq.load(Ordering::Relaxed))
+      == self.queue.len_mask + 1
+    {
       unsafe {
         std::ptr::drop_in_place(next_slot.data.get());
       }
