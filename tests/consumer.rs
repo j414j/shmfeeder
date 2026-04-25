@@ -53,7 +53,7 @@ fn main() {
     #[cfg(feature = "no-heartbeats")]
     let res = consumer.try_read();
     #[cfg(not(feature = "no-heartbeats"))]
-    let res = consumer.try_read(now());
+    let res = unsafe { consumer.try_read_zero_copy(now()) };
     match res {
       Ok(r) => {
         println!("read: {r:?} at ptr {r:p}");

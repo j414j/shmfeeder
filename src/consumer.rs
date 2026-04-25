@@ -260,8 +260,17 @@ where
   }
 
   #[inline]
-  #[cfg(not(feature = "no-heartbeats"))]
-  pub fn try_read(&mut self, now_timestamp: u64) -> ShmResult<&T> {
+  /// SAFETY:
+  ///
+  /// This returns a reference from the queue directly, this reference may
+  /// be overwritten by the producer at any point of time, WITHOUT any
+  /// synchronization. This method is to be used only when the operation
+  /// to perform on `T` is fast.
+  pub unsafe fn try_read_zero_copy(
+    &mut self,
+    #[cfg(not(feature = "no-heartbeats"))] now_timestamp: u64,
+  ) -> ShmResult<&T> {
+    #[cfg(not(feature = "no-heartbeats"))]
     if now_timestamp - self.last_liveness_check > self.liveness_check_periods {
       let queue = unsafe { &mut *self.mmap_ptr };
       if !queue
@@ -282,9 +291,18 @@ where
     unsafe { self.read_handle.try_read() }.ok_or(ShmError::NoData)
   }
   #[inline]
-  #[cfg(feature = "no-heartbeats")]
-  pub fn try_read(&mut self) -> ShmResult<&T> {
-    unsafe { self.read_handle.try_read() }.ok_or(ShmError::NoData)
+  pub fn try_read(
+    &mut self,
+    #[cfg(not(feature = "no-heartbeats"))] now_timestamp: u64,
+  ) -> ShmResult<T> {
+    unsafe {
+      self
+        .try_read_zero_copy(
+          #[cfg(not(feature = "no-heartbeats"))]
+          now_timestamp,
+        )
+        .copied()
+    }
   }
 }
 
