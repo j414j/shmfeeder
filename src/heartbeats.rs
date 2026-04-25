@@ -2,7 +2,7 @@ use std::sync::atomic::{AtomicI32, AtomicU64, Ordering};
 
 use libc::pid_t;
 #[cfg(not(feature = "no-consumer-heartbeat"))]
-use std::sync::atomic::{AtomicBool, AtomicUsize};
+use std::sync::atomic::AtomicUsize;
 
 #[cfg(not(feature = "no-consumer-heartbeat"))]
 const INVALID_PID: pid_t = -1;
@@ -16,7 +16,7 @@ pub struct ItemHeartbeat {
 #[cfg(not(feature = "no-consumer-heartbeat"))]
 pub struct ConsumerHeartbeat {
   heartbeat: ItemHeartbeat,
-  pub reserved: AtomicBool,
+  sequence: AtomicUsize,
 }
 
 #[repr(C)]
@@ -83,7 +83,7 @@ impl ConsumerHeartbeat {
   pub fn new(pid: pid_t) -> Self {
     Self {
       heartbeat: ItemHeartbeat::new(pid),
-      reserved: AtomicBool::new(false),
+      sequence: AtomicUsize::new(0),
     }
   }
 
@@ -93,27 +93,25 @@ impl ConsumerHeartbeat {
   }
 
   #[inline]
-  pub fn is_reserved(&self) -> bool {
-    self.reserved.load(Ordering::Acquire)
-  }
-
-  #[inline]
   pub fn try_reserve(&self, now: u64, tolerance: u64) -> bool {
-    let cas_res = self
-      .reserved
-      .compare_exchange_weak(false, true, Ordering::AcqRel, Ordering::Relaxed)
-      .is_ok();
-    if !cas_res && !self.heartbeat.is_alive(now, tolerance) {
-      // the consumer at this slot is dead
-      return true;
+    // if the heartbeat is dead, we proceed to reserve this slot
+    // by first updating the heartbeat and then doing a CAS on
+    // the sequence number
+    if !self.heartbeat.is_alive(now, tolerance) {
+      self.heartbeat.update(now);
+      let curr_seq = self.sequence.load(Ordering::Acquire);
+      self
+        .sequence
+        .compare_exchange(
+          curr_seq,
+          curr_seq.wrapping_add(1),
+          Ordering::AcqRel,
+          Ordering::Relaxed,
+        )
+        .is_ok()
+    } else {
+      false
     }
-
-    return cas_res;
-  }
-
-  #[inline]
-  pub fn free(&self) {
-    self.reserved.store(false, Ordering::Release);
   }
 }
 
@@ -146,7 +144,8 @@ impl<const MAX_CONSUMERS: usize> ConsumerHeartbeats<MAX_CONSUMERS> {
       return false;
     }
 
-    self.consumers[id].free();
+    // mark the slot stale
+    self.consumers[id].get_heartbeat().update(0);
     true
   }
 
@@ -162,9 +161,7 @@ impl<const MAX_CONSUMERS: usize> ConsumerHeartbeats<MAX_CONSUMERS> {
   fn find_next_consumer(&self, now: u64, tolerance: u64) -> usize {
     let mut ret = MAX_CONSUMERS;
     for i in 0..MAX_CONSUMERS {
-      if self.consumers[i].is_reserved()
-        && self.consumers[i].get_heartbeat().is_alive(now, tolerance)
-      {
+      if self.consumers[i].get_heartbeat().is_alive(now, tolerance) {
         ret = i;
         break;
       }
