@@ -53,7 +53,7 @@ impl ItemHeartbeat {
 
   #[inline]
   pub fn is_alive(&self, now: u64, tolerance: u64) -> bool {
-    now.saturating_sub(self.get_value()) > tolerance
+    now.saturating_sub(self.get_value()) < tolerance
   }
 
   #[inline]
