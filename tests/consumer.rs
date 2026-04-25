@@ -1,4 +1,4 @@
-use shmbroadcast::consumer::{Consumer, ConsumerBuilder};
+use shmfeeder::consumer::{Consumer, ConsumerBuilder};
 
 #[derive(Debug, Copy, Clone)]
 #[repr(C)]

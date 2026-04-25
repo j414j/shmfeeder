@@ -1,6 +1,6 @@
 use std::time::Duration;
 
-use shmbroadcast::producer::{Producer, ProducerBuilder};
+use shmfeeder::producer::{Producer, ProducerBuilder};
 
 #[derive(Copy, Clone)]
 #[repr(C)]
