@@ -5,3 +5,7 @@ edition = "2024"
 
 [dependencies]
 libc = "0.2.185"
+
+[features]
+default = []
+no-consumer-heartbeat = []

@@ -71,12 +71,14 @@ where
         return Err(ShmError::VersionMismatch);
       }
 
+      #[cfg(not(feature = "no-consumer-heartbeat"))]
       let consumer_id = queue.heartbeats.consumers.new_consumer(
         unsafe { libc::getpid() },
         now_timestamp,
         liveness_tolerance,
       );
 
+      #[cfg(not(feature = "no-consumer-heartbeat"))]
       if consumer_id.is_none() {
         return Err(ShmError::MaxConsumerLimitReached);
       }
@@ -114,10 +116,14 @@ where
         }
         return Err(err.into());
       }
+      #[cfg(not(feature = "no-consumer-heartbeat"))]
+      let consumer_heartbeat = consumer_id.unwrap();
+      #[cfg(feature = "no-consumer-heartbeat")]
+      let consumer_heartbeat = 0;
 
       Ok((
         final_mmap as *mut ShmQueue<MAX_CONSUMERS>,
-        consumer_id.unwrap(),
+        consumer_heartbeat,
       ))
     }
     ShmState::Invalid => Err(ShmError::CorruptedQueue),
@@ -178,6 +184,7 @@ where
 {
   mmap_ptr: *mut ShmQueue<MAX_CONSUMERS>,
   mmap_size: usize,
+  #[cfg(not(feature = "no-consumer-heartbeat"))]
   id: usize,
   fd: i32,
   liveness_tolerance: u64,
@@ -209,6 +216,10 @@ where
       liveness_tolerance,
     )?;
 
+    // id is only used to update our heartbeat
+    #[cfg(feature = "no-consumer-heartbeat")]
+    let _id = id;
+
     let num_slots = unsafe { (*ptr).header.n_slots };
 
     let queue = unsafe {
@@ -230,6 +241,7 @@ where
       mmap_ptr: ptr,
       mmap_size,
       fd,
+      #[cfg(not(feature = "no-consumer-heartbeat"))]
       id,
       read_handle,
       liveness_tolerance,
@@ -250,6 +262,7 @@ where
       {
         return Err(ShmError::NoActiveProducer);
       }
+      #[cfg(not(feature = "no-consumer-heartbeat"))]
       queue
         .heartbeats
         .consumers
@@ -266,7 +279,9 @@ where
 {
   fn drop(&mut self) {
     unsafe {
+      #[cfg(not(feature = "no-consumer-heartbeat"))]
       (*self.mmap_ptr).heartbeats.consumers.drop_consumer(self.id);
+
       libc::munmap(self.mmap_ptr as *mut libc::c_void, self.mmap_size);
       libc::close(self.fd);
     }

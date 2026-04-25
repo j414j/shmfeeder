@@ -261,6 +261,7 @@ where
   name: CString,
   liveness_check_periods: u64,
   last_liveness_check: u64,
+  #[cfg(not(feature="no-consumer-heartbeat"))]
   liveness_tolerance: u64,
   write_handle: BroadcastWriteHandle<T>,
 }
@@ -319,6 +320,7 @@ where
       fd,
       name,
       write_handle,
+      #[cfg(not(feature="no-consumer-heartbeat"))]
       liveness_tolerance,
       last_liveness_check: now_timestamp,
       liveness_check_periods: liveness_tolerance / 2,
@@ -338,6 +340,7 @@ where
       let queue = unsafe { &mut *self.mmap_ptr };
       queue.heartbeats.producer.heartbeat.update(now_timestamp);
       self.last_liveness_check = now_timestamp;
+      #[cfg(not(feature = "no-consumer-heartbeat"))]
       if !queue
         .heartbeats
         .consumers

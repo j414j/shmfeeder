@@ -1,20 +1,26 @@
-use std::sync::atomic::{AtomicBool, AtomicI32, AtomicU64, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicI32, AtomicU64, Ordering};
 
 use libc::pid_t;
+#[cfg(not(feature = "no-consumer-heartbeat"))]
+use std::sync::atomic::{AtomicBool, AtomicUsize};
 
+#[cfg(not(feature = "no-consumer-heartbeat"))]
 const INVALID_PID: pid_t = -1;
+
 #[repr(C)]
 pub struct ItemHeartbeat {
   pid: AtomicI32,
   last_update_us: AtomicU64,
 }
 #[repr(C)]
+#[cfg(not(feature = "no-consumer-heartbeat"))]
 pub struct ConsumerHeartbeat {
   heartbeat: ItemHeartbeat,
   pub reserved: AtomicBool,
 }
 
 #[repr(C)]
+#[cfg(not(feature = "no-consumer-heartbeat"))]
 pub struct ConsumerHeartbeats<const MAX_CONSUMERS: usize> {
   pub prev_consumer: AtomicUsize,
   pub consumers: [ConsumerHeartbeat; MAX_CONSUMERS],
@@ -28,6 +34,7 @@ pub struct ProducerHeartbeat {
 #[repr(C)]
 pub struct Heartbeats<const MAX_CONSUMERS: usize> {
   pub producer: ProducerHeartbeat,
+  #[cfg(not(feature = "no-consumer-heartbeat"))]
   pub consumers: ConsumerHeartbeats<MAX_CONSUMERS>,
 }
 
@@ -65,11 +72,13 @@ impl ItemHeartbeat {
   }
 
   #[inline]
+  #[cfg(not(feature = "no-consumer-heartbeat"))]
   fn set_pid(&self, pid: pid_t) {
     self.pid.store(pid, Ordering::Release);
   }
 }
 
+#[cfg(not(feature = "no-consumer-heartbeat"))]
 impl ConsumerHeartbeat {
   pub fn new(pid: pid_t) -> Self {
     Self {
@@ -108,6 +117,7 @@ impl ConsumerHeartbeat {
   }
 }
 
+#[cfg(not(feature = "no-consumer-heartbeat"))]
 impl<const MAX_CONSUMERS: usize> ConsumerHeartbeats<MAX_CONSUMERS> {
   pub fn new() -> Self {
     Self {

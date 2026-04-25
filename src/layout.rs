@@ -54,6 +54,7 @@ where
   let heartbeats_size = size_of::<Heartbeats<MAX_CONSUMERS>>();
   let producer_hb_offset =
     heartbeats_offset + std::mem::offset_of!(Heartbeats<MAX_CONSUMERS>, producer);
+  #[cfg(not(feature="no-consumer-heartbeat"))]
   let consumers_hb_offset =
     heartbeats_offset + std::mem::offset_of!(Heartbeats<MAX_CONSUMERS>, consumers);
   let queue_offset = queue.header.queue_offset;
@@ -83,6 +84,7 @@ where
       format!("HEARTBEATS BEGIN (size = {heartbeats_size} bytes)"),
     ),
     (producer_hb_offset, "PRODUCER HEARTBEAT".to_string()),
+    #[cfg(not(feature="no-consumer-heartbeat"))]
     (consumers_hb_offset, "CONSUMER HEARTBEATS".to_string()),
     (
       queue_base_offset,
