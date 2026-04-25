@@ -1,7 +1,4 @@
-use shmfeeder::{
-  consumer::{Consumer, ConsumerBuilder},
-  error::ShmError,
-};
+use shmfeeder::{Consumer, ConsumerBuilder, ShmError};
 
 #[derive(Debug, Copy, Clone)]
 #[repr(C)]

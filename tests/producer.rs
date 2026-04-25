@@ -1,8 +1,8 @@
 use std::time::{Duration, UNIX_EPOCH};
 
 #[cfg(not(feature = "no-heartbeats"))]
-use shmfeeder::error::ShmError;
-use shmfeeder::producer::{Producer, ProducerBuilder};
+use shmfeeder::ShmError;
+use shmfeeder::{Producer, ProducerBuilder};
 
 #[derive(Copy, Clone)]
 #[repr(C)]

@@ -1,7 +1,11 @@
-pub mod consumer;
-pub mod error;
+mod consumer;
+mod error;
 #[cfg(not(feature = "no-heartbeats"))]
-pub mod heartbeats;
-pub mod layout;
-pub mod producer;
-pub mod queue;
+mod heartbeats;
+mod layout;
+mod producer;
+mod queue;
+
+pub use consumer::{Consumer, ConsumerBuilder};
+pub use error::{ShmError, ShmResult};
+pub use producer::{Producer, ProducerBuilder};

@@ -38,11 +38,6 @@ pub struct Heartbeats<const MAX_CONSUMERS: usize> {
   pub consumers: ConsumerHeartbeats<MAX_CONSUMERS>,
 }
 
-pub enum TryNewConsumerFailReason {
-  CASFailed,
-  SlotsFull,
-}
-
 impl ItemHeartbeat {
   pub fn new(pid: pid_t) -> Self {
     Self {

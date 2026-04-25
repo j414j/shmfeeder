@@ -183,7 +183,8 @@ where
         .heartbeat
         .is_alive(now_timestamp, liveness_tolerance)
       {
-        return Err(ShmError::QueueAlreadyAcquired);
+        let pid = queue.heartbeats.producer.heartbeat.get_pid();
+        return Err(ShmError::QueueAlreadyAcquired(pid));
       }
 
       if queue.header.magic != magic {

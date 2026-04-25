@@ -5,7 +5,7 @@ use crate::layout::ShmState;
 #[derive(Debug)]
 pub enum ShmError {
   QueueNotReady(ShmState),
-  QueueAlreadyAcquired,
+  QueueAlreadyAcquired(i32),
   NoActiveProducer,
   NoActiveConsumer,
   NoData,
