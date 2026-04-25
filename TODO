@@ -1,8 +1,8 @@
-[ ] Add T: Copy trait bound to allow PoD structs only
+[X] Add T: Copy trait bound to allow PoD structs only
 [X] Add consumers
-[ ] Functionalise heartbeat mechanism
-[ ] Add feature flags to remove consumer heartbeats or heartbeats entirely during compile time itself
-[ ] Make all shared structs repr(C)
+[X] Functionalise heartbeat mechanism
+[X] Add feature flags to remove consumer heartbeats or heartbeats entirely during compile time itself
+[X] Make all shared structs repr(C)
 [ ] Make MAX_CONSUMERS configurable on startup rather than a compile time constant
 [ ] Add tests:
   - [ ] Producer rejects queue if another producer already present

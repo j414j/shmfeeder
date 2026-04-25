@@ -37,11 +37,14 @@ fn main() {
   }
 
   let builder = consumer.unwrap();
+  #[cfg(not(feature = "no-heartbeats"))]
   let builder = builder
     .with_magic(0x7887_7887)
     .with_version(1)
     .with_liveness_tolerance(10_000_000) // 10 seconds liveness tolerance
     .build(now());
+  #[cfg(feature = "no-heartbeats")]
+  let builder = builder.with_magic(0x7887_7887).with_version(1).build();
 
   if builder.is_err() {
     eprintln!("error during build: {:?}", builder.err());
@@ -50,7 +53,11 @@ fn main() {
 
   let mut consumer: Consumer<D, 64> = builder.unwrap();
   loop {
-    match consumer.try_read(now()) {
+    #[cfg(feature = "no-heartbeats")]
+    let res = consumer.try_read();
+    #[cfg(not(feature = "no-heartbeats"))]
+    let res = consumer.try_read(now());
+    match res {
       Ok(r) => {
         println!("read: {r:?} at ptr {r:p}");
       }

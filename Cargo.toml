@@ -7,5 +7,6 @@ edition = "2024"
 libc = "0.2.185"
 
 [features]
-default = []
+default = ["]
 no-consumer-heartbeat = []
+no-heartbeats = ["no-consumer-heartbeat"]

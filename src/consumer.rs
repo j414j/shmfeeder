@@ -20,8 +20,8 @@ fn try_attach_shared_memory<T, const MAX_CONSUMERS: usize>(
   fd: i32,
   magic: u64,
   version: u64,
-  now_timestamp: u64,
-  liveness_tolerance: u64,
+  #[cfg(not(feature = "no-heartbeats"))] now_timestamp: u64,
+  #[cfg(not(feature = "no-heartbeats"))] liveness_tolerance: u64,
 ) -> ShmResult<(*mut ShmQueue<MAX_CONSUMERS>, usize)>
 where
   T: Copy,
@@ -54,6 +54,7 @@ where
       Err(ShmError::QueueNotReady(queue_state.into()))
     }
     ShmState::Ready => {
+      #[cfg(not(feature = "no-heartbeats"))]
       if !queue
         .heartbeats
         .producer
@@ -134,6 +135,7 @@ pub struct ConsumerBuilder {
   name: CString,
   magic: u64,
   version: u64,
+  #[cfg(not(feature = "no-heartbeats"))]
   liveness_tolerance: u64,
 }
 
@@ -145,6 +147,7 @@ impl ConsumerBuilder {
       name,
       magic: 0,
       version: 0,
+      #[cfg(not(feature = "no-heartbeats"))]
       liveness_tolerance: 1000,
     })
   }
@@ -157,13 +160,14 @@ impl ConsumerBuilder {
     self.version = version;
     self
   }
+  #[cfg(not(feature = "no-heartbeats"))]
   pub fn with_liveness_tolerance(mut self, liveness_tolerance: u64) -> Self {
     self.liveness_tolerance = liveness_tolerance;
     self
   }
   pub fn build<T, const MAX_CONSUMERS: usize>(
     self,
-    now_timestamp: u64,
+    #[cfg(not(feature = "no-heartbeats"))] now_timestamp: u64,
   ) -> ShmResult<Consumer<T, MAX_CONSUMERS>>
   where
     T: Copy,
@@ -172,7 +176,9 @@ impl ConsumerBuilder {
       self.name,
       self.magic,
       self.version,
+      #[cfg(not(feature = "no-heartbeats"))]
       now_timestamp,
+      #[cfg(not(feature = "no-heartbeats"))]
       self.liveness_tolerance,
     )
   }
@@ -187,8 +193,11 @@ where
   #[cfg(not(feature = "no-consumer-heartbeat"))]
   id: usize,
   fd: i32,
+  #[cfg(not(feature = "no-heartbeats"))]
   liveness_tolerance: u64,
+  #[cfg(not(feature = "no-heartbeats"))]
   liveness_check_periods: u64,
+  #[cfg(not(feature = "no-heartbeats"))]
   last_liveness_check: u64,
   read_handle: BroadcastReadHandle<T>,
 }
@@ -201,8 +210,8 @@ where
     name: CString,
     magic: u64,
     version: u64,
-    now_timestamp: u64,
-    liveness_tolerance: u64,
+    #[cfg(not(feature = "no-heartbeats"))] now_timestamp: u64,
+    #[cfg(not(feature = "no-heartbeats"))] liveness_tolerance: u64,
   ) -> ShmResult<Self> {
     let queue_layout = BroadCastQueue::<T>::slot_layout();
 
@@ -212,7 +221,9 @@ where
       fd,
       magic,
       version,
+      #[cfg(not(feature = "no-heartbeats"))]
       now_timestamp,
+      #[cfg(not(feature = "no-heartbeats"))]
       liveness_tolerance,
     )?;
 
@@ -244,13 +255,17 @@ where
       #[cfg(not(feature = "no-consumer-heartbeat"))]
       id,
       read_handle,
+      #[cfg(not(feature = "no-heartbeats"))]
       liveness_tolerance,
+      #[cfg(not(feature = "no-heartbeats"))]
       liveness_check_periods: liveness_tolerance / 2,
+      #[cfg(not(feature = "no-heartbeats"))]
       last_liveness_check: now_timestamp,
     })
   }
 
   #[inline]
+  #[cfg(not(feature = "no-heartbeats"))]
   pub fn try_read(&mut self, now_timestamp: u64) -> ShmResult<&T> {
     if now_timestamp - self.last_liveness_check > self.liveness_check_periods {
       let queue = unsafe { &mut *self.mmap_ptr };
@@ -269,6 +284,11 @@ where
         .update_heartbeat(self.id, now_timestamp);
       self.last_liveness_check = now_timestamp;
     }
+    unsafe { self.read_handle.try_read() }.ok_or(ShmError::NoData)
+  }
+  #[inline]
+  #[cfg(feature = "no-heartbeats")]
+  pub fn try_read(&mut self) -> ShmResult<&T> {
     unsafe { self.read_handle.try_read() }.ok_or(ShmError::NoData)
   }
 }

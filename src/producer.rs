@@ -2,13 +2,13 @@ use std::{ffi::CString, io, str::FromStr, sync::atomic::Ordering};
 
 use libc::ftruncate;
 
+#[cfg(not(feature = "no-heartbeats"))]
+use crate::heartbeats::ItemHeartbeat;
 use crate::{
   error::{ShmError, ShmResult},
-  heartbeats::ItemHeartbeat,
   layout::{ShmQueue, ShmState},
   queue::{BroadCastQueue, BroadcastWriteHandle},
 };
-
 enum ConnectedMemoryType {
   New,
   Old,
@@ -55,7 +55,7 @@ fn init_queue_at_ptr<T, const MAX_CONSUMERS: usize>(
   magic: u64,
   version: u64,
   num_slots: usize,
-  now_timestamp: u64,
+  #[cfg(not(feature = "no-heartbeats"))] now_timestamp: u64,
 ) where
   T: Copy,
 {
@@ -81,10 +81,11 @@ fn init_queue_at_ptr<T, const MAX_CONSUMERS: usize>(
 
   queue.header.queue_offset = unsafe { slot_ptr.byte_offset_from_unsigned(slot_begin) };
 
-  // TODO: init the slots here
-
-  queue.heartbeats.producer.heartbeat = ItemHeartbeat::new(unsafe { libc::getpid() });
-  queue.heartbeats.producer.heartbeat.update(now_timestamp);
+  #[cfg(not(feature = "no-heartbeats"))]
+  {
+    queue.heartbeats.producer.heartbeat = ItemHeartbeat::new(unsafe { libc::getpid() });
+    queue.heartbeats.producer.heartbeat.update(now_timestamp);
+  }
 
   queue
     .header
@@ -99,7 +100,7 @@ fn setup_new_memory<T, const MAX_CONSUMERS: usize>(
   magic: u64,
   version: u64,
   num_slots: usize,
-  now_timestamp: u64,
+  #[cfg(not(feature = "no-heartbeats"))] now_timestamp: u64,
 ) -> ShmResult<*mut ShmQueue<MAX_CONSUMERS>>
 where
   T: Copy,
@@ -127,7 +128,14 @@ where
     libc::memset(ptr, 0, size);
   }
 
-  init_queue_at_ptr::<T, MAX_CONSUMERS>(ptr, magic, version, num_slots, now_timestamp);
+  init_queue_at_ptr::<T, MAX_CONSUMERS>(
+    ptr,
+    magic,
+    version,
+    num_slots,
+    #[cfg(not(feature = "no-heartbeats"))]
+    now_timestamp,
+  );
 
   Ok(ptr as *mut ShmQueue<MAX_CONSUMERS>)
 }
@@ -139,8 +147,8 @@ fn setup_old_memory<T, const MAX_CONSUMERS: usize>(
   magic: u64,
   version: u64,
   num_slots: usize,
-  now_timestamp: u64,
-  liveness_tolerance: u64,
+  #[cfg(not(feature = "no-heartbeats"))] now_timestamp: u64,
+  #[cfg(not(feature = "no-heartbeats"))] liveness_tolerance: u64,
 ) -> ShmResult<*mut ShmQueue<MAX_CONSUMERS>>
 where
   T: Copy,
@@ -169,6 +177,7 @@ where
 
   match queue_state.into() {
     ShmState::Starting | ShmState::Ready | ShmState::ShuttingDown => {
+      #[cfg(not(feature = "no-heartbeats"))]
       if queue
         .heartbeats
         .producer
@@ -195,7 +204,14 @@ where
   }
 
   // ready to take ownership of queue and initialise it as new
-  init_queue_at_ptr::<T, MAX_CONSUMERS>(ptr, magic, version, num_slots, now_timestamp);
+  init_queue_at_ptr::<T, MAX_CONSUMERS>(
+    ptr,
+    magic,
+    version,
+    num_slots,
+    #[cfg(not(feature = "no-heartbeats"))]
+    now_timestamp,
+  );
 
   Ok(ptr as *mut ShmQueue<MAX_CONSUMERS>)
 }
@@ -205,6 +221,7 @@ pub struct ProducerBuilder {
   num_slots: usize,
   magic: u64,
   version: u64,
+  #[cfg(not(feature = "no-heartbeats"))]
   liveness_tolerance: u64,
 }
 
@@ -217,6 +234,7 @@ impl ProducerBuilder {
       num_slots,
       magic: 0,
       version: 0,
+      #[cfg(not(feature = "no-heartbeats"))]
       liveness_tolerance: 1000,
     })
   }
@@ -229,13 +247,15 @@ impl ProducerBuilder {
     self.version = version;
     self
   }
+
+  #[cfg(not(feature = "no-heartbeats"))]
   pub fn with_liveness_tolerance(mut self, liveness_tolerance: u64) -> Self {
     self.liveness_tolerance = liveness_tolerance;
     self
   }
   pub fn build<T, const MAX_CONSUMERS: usize>(
     self,
-    now_timestamp: u64,
+    #[cfg(not(feature = "no-heartbeats"))] now_timestamp: u64,
   ) -> ShmResult<Producer<T, MAX_CONSUMERS>>
   where
     T: Copy,
@@ -245,7 +265,9 @@ impl ProducerBuilder {
       self.num_slots,
       self.magic,
       self.version,
+      #[cfg(not(feature = "no-heartbeats"))]
       now_timestamp,
+      #[cfg(not(feature = "no-heartbeats"))]
       self.liveness_tolerance,
     )
   }
@@ -259,9 +281,11 @@ where
   mmap_size: usize,
   fd: i32,
   name: CString,
+  #[cfg(not(feature = "no-heartbeats"))]
   liveness_check_periods: u64,
+  #[cfg(not(feature = "no-heartbeats"))]
   last_liveness_check: u64,
-  #[cfg(not(feature="no-consumer-heartbeat"))]
+  #[cfg(not(feature = "no-consumer-heartbeat"))]
   liveness_tolerance: u64,
   write_handle: BroadcastWriteHandle<T>,
 }
@@ -275,8 +299,8 @@ where
     num_slots: usize,
     magic: u64,
     version: u64,
-    now_timestamp: u64,
-    liveness_tolerance: u64,
+    #[cfg(not(feature = "no-heartbeats"))] now_timestamp: u64,
+    #[cfg(not(feature = "no-heartbeats"))] liveness_tolerance: u64,
   ) -> ShmResult<Self> {
     let queue_layout = BroadCastQueue::<T>::slot_layout();
 
@@ -287,9 +311,16 @@ where
 
     let (memory_type, fd) = try_init_shared_memory(&name, size)?;
     let ptr = match memory_type {
-      ConnectedMemoryType::New => {
-        setup_new_memory::<T, _>(&name, fd, size, magic, version, num_slots, now_timestamp)?
-      }
+      ConnectedMemoryType::New => setup_new_memory::<T, _>(
+        &name,
+        fd,
+        size,
+        magic,
+        version,
+        num_slots,
+        #[cfg(not(feature = "no-heartbeats"))]
+        now_timestamp,
+      )?,
 
       ConnectedMemoryType::Old => setup_old_memory::<T, _>(
         &name,
@@ -298,7 +329,9 @@ where
         magic,
         version,
         num_slots,
+        #[cfg(not(feature = "no-heartbeats"))]
         now_timestamp,
+        #[cfg(not(feature = "no-heartbeats"))]
         liveness_tolerance,
       )?,
     };
@@ -320,9 +353,11 @@ where
       fd,
       name,
       write_handle,
-      #[cfg(not(feature="no-consumer-heartbeat"))]
+      #[cfg(not(feature = "no-consumer-heartbeat"))]
       liveness_tolerance,
+      #[cfg(not(feature = "no-heartbeats"))]
       last_liveness_check: now_timestamp,
+      #[cfg(not(feature = "no-heartbeats"))]
       liveness_check_periods: liveness_tolerance / 2,
     })
   }
@@ -333,6 +368,7 @@ where
   }
 
   #[inline]
+  #[cfg(not(feature = "no-heartbeats"))]
   pub fn commit_next_slot(&mut self, now_timestamp: u64) -> ShmResult<()> {
     self.write_handle.commit_next_slot();
 
@@ -350,6 +386,13 @@ where
       }
     }
 
+    Ok(())
+  }
+
+  #[inline]
+  #[cfg(feature = "no-heartbeats")]
+  pub fn commit_next_slot(&mut self) -> ShmResult<()> {
+    self.write_handle.commit_next_slot();
     Ok(())
   }
 

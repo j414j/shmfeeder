@@ -1,5 +1,6 @@
 use std::sync::atomic::{AtomicU8, AtomicUsize};
 
+#[cfg(not(feature = "no-heartbeats"))]
 use crate::heartbeats::Heartbeats;
 
 #[repr(C)]
@@ -38,6 +39,7 @@ impl From<u8> for ShmState {
 #[repr(C)]
 pub struct ShmQueue<const MAX_CONSUMERS: usize> {
   pub header: ShmHeader,
+  #[cfg(not(feature = "no-heartbeats"))]
   pub heartbeats: Heartbeats<MAX_CONSUMERS>,
 }
 
@@ -50,8 +52,11 @@ where
   let slot_layout = crate::queue::BroadCastQueue::<T>::slot_layout();
   let header_size = size_of::<crate::layout::ShmHeader>();
   let shm_queue_size = size_of::<ShmQueue<MAX_CONSUMERS>>();
+  #[cfg(not(feature = "no-heartbeats"))]
   let heartbeats_offset = std::mem::offset_of!(ShmQueue<MAX_CONSUMERS>, heartbeats);
+  #[cfg(not(feature = "no-heartbeats"))]
   let heartbeats_size = size_of::<Heartbeats<MAX_CONSUMERS>>();
+  #[cfg(not(feature = "no-heartbeats"))]
   let producer_hb_offset =
     heartbeats_offset + std::mem::offset_of!(Heartbeats<MAX_CONSUMERS>, producer);
   #[cfg(not(feature="no-consumer-heartbeat"))]
@@ -79,10 +84,12 @@ where
 
   let mut boundaries = vec![
     (0usize, format!("HEADER BEGIN (size = {header_size} bytes)")),
+    #[cfg(not(feature = "no-heartbeats"))]
     (
       heartbeats_offset,
       format!("HEARTBEATS BEGIN (size = {heartbeats_size} bytes)"),
     ),
+    #[cfg(not(feature = "no-heartbeats"))]
     (producer_hb_offset, "PRODUCER HEARTBEAT".to_string()),
     #[cfg(not(feature="no-consumer-heartbeat"))]
     (consumers_hb_offset, "CONSUMER HEARTBEATS".to_string()),
@@ -113,7 +120,9 @@ where
   println!("total_size          = {} bytes", full_length);
   println!("header_size         = {} bytes", header_size);
   println!("shm_queue_size      = {} bytes", shm_queue_size);
+  #[cfg(not(feature = "no-heartbeats"))]
   println!("heartbeats_offset   = 0x{heartbeats_offset:08x}");
+  #[cfg(not(feature = "no-heartbeats"))]
   println!("heartbeats_size     = {} bytes", heartbeats_size);
   println!("queue_base_offset   = 0x{queue_base_offset:08x}");
   println!("queue_offset        = 0x{queue_offset:08x} (relative to queue_base_offset)");

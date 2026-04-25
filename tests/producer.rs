@@ -1,9 +1,8 @@
 use std::time::{Duration, UNIX_EPOCH};
 
-use shmfeeder::{
-  error::ShmError,
-  producer::{Producer, ProducerBuilder},
-};
+#[cfg(not(feature = "no-heartbeats"))]
+use shmfeeder::error::ShmError;
+use shmfeeder::producer::{Producer, ProducerBuilder};
 
 #[derive(Copy, Clone)]
 #[repr(C)]
@@ -40,11 +39,13 @@ fn main() {
   }
 
   let builder = producer.unwrap();
+  let builder = builder.with_magic(0x7887_7887).with_version(1);
+  #[cfg(not(feature = "no-heartbeats"))]
   let builder = builder
-    .with_magic(0x7887_7887)
-    .with_version(1)
     .with_liveness_tolerance(10_000_000) // 10 second liveness check
     .build(now());
+  #[cfg(feature = "no-heartbeats")]
+  let builder = builder.build();
 
   if builder.is_err() {
     eprintln!("error during build: {:?}", builder.err());
@@ -55,10 +56,13 @@ fn main() {
   for i in 0..9000 {
     let buffer = producer.get_next_buffer();
     unsafe { buffer.write(D::new(i)) };
+    #[cfg(not(feature = "no-heartbeats"))]
     if let Err(ShmError::NoActiveConsumer) = producer.commit_next_slot(now()) {
       println!("no active consumer, exiting now");
       break;
     }
+    #[cfg(feature = "no-heartbeats")]
+    let _ = producer.commit_next_slot();
     println!("wrote: {i} at ptr {buffer:p}");
     producer.debug_print_queue();
     std::thread::sleep(Duration::from_millis(100));
