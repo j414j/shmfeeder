@@ -28,7 +28,7 @@ fn main() {
   }
 
   let builder = producer.unwrap();
-  let builder = builder.with_magic(0x7887_7887).with_version(1).build(1000);
+  let builder = builder.with_magic(0x7887_7887).with_version(1).build(4000);
 
   if builder.is_err() {
     eprintln!("error during build: {:?}", builder.err());

@@ -12,6 +12,7 @@ pub struct ShmHeader {
 }
 
 #[repr(u8)]
+#[derive(Debug)]
 pub enum ShmState {
   Starting = 0,
   Ready = 1,

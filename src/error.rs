@@ -1,14 +1,18 @@
 use std::io;
 
+use crate::layout::ShmState;
+
 #[derive(Debug)]
 pub enum ShmError {
-  QueueNotReady,
+  QueueNotReady(ShmState),
   QueueAlreadyAcquired,
+  NoActiveProducer,
   CorruptedQueue,
   VersionMismatch,
   BadMagicNum,
   LengthNotPowerOfTwo,
   UnalignedPtr,
+  MaxConsumerLimitReached,
   Io(io::Error),
 }
 

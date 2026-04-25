@@ -103,14 +103,14 @@ impl<T> BroadcastWriteHandle<T> {
   }
 }
 
-pub struct ReadCursor<'a, T> {
-  queue: &'a BroadCastQueue<T>,
+pub struct BroadcastReadHandle<T> {
+  queue: BroadCastQueue<T>,
   cursor: usize,
   seq: usize,
 }
 
-impl<'a, T> ReadCursor<'a, T> {
-  pub fn new(queue: &'a BroadCastQueue<T>) -> Self {
+impl<T> BroadcastReadHandle<T> {
+  pub fn new(queue: BroadCastQueue<T>) -> Self {
     let last_committed_slot_idx = unsafe { &*queue.last_committed_slot }.load(Ordering::Acquire);
     Self {
       queue,
@@ -125,7 +125,7 @@ impl<'a, T> ReadCursor<'a, T> {
 
   /// unsafe because the slot can be overwritten by the producer at any point
   /// a slow consumer can face data races.
-  pub unsafe fn try_read(&mut self) -> Option<&'a T> {
+  pub unsafe fn try_read(&mut self) -> Option<&T> {
     let slot = unsafe { &*self.queue.buf.add(self.cursor) };
     let slot_seq = slot.seq.load(Ordering::Acquire);
 
