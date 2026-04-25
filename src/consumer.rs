@@ -180,6 +180,9 @@ where
   mmap_size: usize,
   id: usize,
   fd: i32,
+  liveness_tolerance: u64,
+  liveness_check_periods: u64,
+  last_liveness_check: u64,
   read_handle: BroadcastReadHandle<T>,
 }
 
@@ -229,12 +232,31 @@ where
       fd,
       id,
       read_handle,
+      liveness_tolerance,
+      liveness_check_periods: liveness_tolerance / 2,
+      last_liveness_check: now_timestamp,
     })
   }
 
   #[inline]
-  pub fn try_read(&mut self) -> Option<&T> {
-    unsafe { self.read_handle.try_read() }
+  pub fn try_read(&mut self, now_timestamp: u64) -> ShmResult<&T> {
+    if now_timestamp - self.last_liveness_check > self.liveness_check_periods {
+      let queue = unsafe { &mut *self.mmap_ptr };
+      if !queue
+        .heartbeats
+        .producer
+        .heartbeat
+        .is_alive(now_timestamp, self.liveness_tolerance)
+      {
+        return Err(ShmError::NoActiveProducer);
+      }
+      queue
+        .heartbeats
+        .consumers
+        .update_heartbeat(self.id, now_timestamp);
+      self.last_liveness_check = now_timestamp;
+    }
+    unsafe { self.read_handle.try_read() }.ok_or(ShmError::NoData)
   }
 }
 

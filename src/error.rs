@@ -7,6 +7,8 @@ pub enum ShmError {
   QueueNotReady(ShmState),
   QueueAlreadyAcquired,
   NoActiveProducer,
+  NoActiveConsumer,
+  NoData,
   CorruptedQueue,
   VersionMismatch,
   BadMagicNum,

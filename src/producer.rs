@@ -259,6 +259,9 @@ where
   mmap_size: usize,
   fd: i32,
   name: CString,
+  liveness_check_periods: u64,
+  last_liveness_check: u64,
+  liveness_tolerance: u64,
   write_handle: BroadcastWriteHandle<T>,
 }
 
@@ -316,6 +319,9 @@ where
       fd,
       name,
       write_handle,
+      liveness_tolerance,
+      last_liveness_check: now_timestamp,
+      liveness_check_periods: liveness_tolerance / 2,
     })
   }
 
@@ -325,8 +331,23 @@ where
   }
 
   #[inline]
-  pub fn commit_next_slot(&mut self) {
+  pub fn commit_next_slot(&mut self, now_timestamp: u64) -> ShmResult<()> {
     self.write_handle.commit_next_slot();
+
+    if now_timestamp.saturating_sub(self.last_liveness_check) > self.liveness_check_periods {
+      let queue = unsafe { &mut *self.mmap_ptr };
+      queue.heartbeats.producer.heartbeat.update(now_timestamp);
+      self.last_liveness_check = now_timestamp;
+      if !queue
+        .heartbeats
+        .consumers
+        .is_any_consumer_alive(now_timestamp, self.liveness_tolerance)
+      {
+        return Err(ShmError::NoActiveConsumer);
+      }
+    }
+
+    Ok(())
   }
 
   #[inline]
