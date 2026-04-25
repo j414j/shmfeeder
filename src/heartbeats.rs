@@ -3,26 +3,29 @@ use std::sync::atomic::{AtomicBool, AtomicI32, AtomicU64, AtomicUsize, Ordering}
 use libc::pid_t;
 
 const INVALID_PID: pid_t = -1;
-
+#[repr(C)]
 pub struct ItemHeartbeat {
   pid: AtomicI32,
   last_update_us: AtomicU64,
 }
-
+#[repr(C)]
 pub struct ConsumerHeartbeat {
   heartbeat: ItemHeartbeat,
   pub reserved: AtomicBool,
 }
 
+#[repr(C)]
 pub struct ConsumerHeartbeats<const MAX_CONSUMERS: usize> {
   pub prev_consumer: AtomicUsize,
   pub consumers: [ConsumerHeartbeat; MAX_CONSUMERS],
 }
 
+#[repr(C)]
 pub struct ProducerHeartbeat {
   pub heartbeat: ItemHeartbeat,
 }
 
+#[repr(C)]
 pub struct Heartbeats<const MAX_CONSUMERS: usize> {
   pub producer: ProducerHeartbeat,
   pub consumers: ConsumerHeartbeats<MAX_CONSUMERS>,

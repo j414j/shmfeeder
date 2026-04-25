@@ -1,6 +1,7 @@
 use shmbroadcast::consumer::{Consumer, ConsumerBuilder};
 
 #[derive(Debug, Copy, Clone)]
+#[repr(C)]
 pub struct D {
   a: i64,
   b: i64,

@@ -5,13 +5,19 @@ use std::{
 
 use crate::error::{ShmError, ShmResult};
 
-#[repr(align(64))]
-pub(crate) struct Slot<T> {
+#[repr(C, align(64))]
+pub(crate) struct Slot<T>
+where
+  T: Copy,
+{
   pub(crate) seq: AtomicUsize,
   data: UnsafeCell<T>,
 }
 
-pub struct BroadCastQueue<T> {
+pub struct BroadCastQueue<T>
+where
+  T: Copy,
+{
   buf: *mut Slot<T>,
   last_committed_slot: *mut AtomicUsize,
   len_mask: usize,
@@ -22,7 +28,10 @@ pub struct SlotLayout {
   pub align: usize,
 }
 
-impl<T> BroadCastQueue<T> {
+impl<T> BroadCastQueue<T>
+where
+  T: Copy,
+{
   pub const fn slot_layout() -> SlotLayout {
     SlotLayout {
       size: std::mem::size_of::<Slot<T>>(),
@@ -56,15 +65,21 @@ impl<T> BroadCastQueue<T> {
   }
 }
 
-unsafe impl<T> Send for BroadCastQueue<T> {}
-unsafe impl<T> Sync for BroadCastQueue<T> {}
+unsafe impl<T> Send for BroadCastQueue<T> where T: Copy {}
+unsafe impl<T> Sync for BroadCastQueue<T> where T: Copy {}
 
-pub struct BroadcastWriteHandle<T> {
+pub struct BroadcastWriteHandle<T>
+where
+  T: Copy,
+{
   queue: BroadCastQueue<T>,
   seq: usize,
 }
 
-impl<T> BroadcastWriteHandle<T> {
+impl<T> BroadcastWriteHandle<T>
+where
+  T: Copy,
+{
   pub fn new(queue: BroadCastQueue<T>) -> Self {
     Self { queue, seq: 0 }
   }
@@ -76,11 +91,6 @@ impl<T> BroadcastWriteHandle<T> {
       & (self.queue.len_mask);
     let next_slot = unsafe { &*self.queue.buf.add(next_idx) };
 
-    println!(
-      "next idx = {next_idx} self seq = {} next seq = {} next slot = {next_slot:p}",
-      self.seq,
-      next_slot.seq.load(Ordering::Acquire)
-    );
     // we are about to overwrite an element, call its destructor
     if self.seq - next_slot.seq.load(Ordering::Relaxed) == self.queue.len_mask + 1 {
       unsafe {
@@ -103,13 +113,19 @@ impl<T> BroadcastWriteHandle<T> {
   }
 }
 
-pub struct BroadcastReadHandle<T> {
+pub struct BroadcastReadHandle<T>
+where
+  T: Copy,
+{
   queue: BroadCastQueue<T>,
   cursor: usize,
   seq: usize,
 }
 
-impl<T> BroadcastReadHandle<T> {
+impl<T> BroadcastReadHandle<T>
+where
+  T: Copy,
+{
   pub fn new(queue: BroadCastQueue<T>) -> Self {
     let last_committed_slot_idx = unsafe { &*queue.last_committed_slot }.load(Ordering::Acquire);
     Self {

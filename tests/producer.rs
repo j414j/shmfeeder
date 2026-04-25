@@ -1,6 +1,9 @@
 use std::time::Duration;
 
 use shmbroadcast::producer::{Producer, ProducerBuilder};
+
+#[derive(Copy, Clone)]
+#[repr(C)]
 pub struct D {
   a: i64,
   b: i64,
@@ -41,7 +44,7 @@ fn main() {
     unsafe { buffer.write(D::new(i)) };
     producer.commit_next_slot();
     println!("wrote: {i} at ptr {buffer:p}");
-    producer.print_shm();
+    producer.debug_print_queue();
     std::thread::sleep(Duration::from_millis(100));
   }
 }

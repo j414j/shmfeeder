@@ -22,7 +22,10 @@ fn try_attach_shared_memory<T, const MAX_CONSUMERS: usize>(
   version: u64,
   now_timestamp: u64,
   liveness_tolerance: u64,
-) -> ShmResult<(*mut ShmQueue<MAX_CONSUMERS>, usize)> {
+) -> ShmResult<(*mut ShmQueue<MAX_CONSUMERS>, usize)>
+where
+  T: Copy,
+{
   let initial_size = std::mem::size_of::<ShmQueue<MAX_CONSUMERS>>();
   let ptr = unsafe {
     libc::mmap(
@@ -155,7 +158,10 @@ impl ConsumerBuilder {
   pub fn build<T, const MAX_CONSUMERS: usize>(
     self,
     now_timestamp: u64,
-  ) -> ShmResult<Consumer<T, MAX_CONSUMERS>> {
+  ) -> ShmResult<Consumer<T, MAX_CONSUMERS>>
+  where
+    T: Copy,
+  {
     Consumer::new(
       self.name,
       self.magic,
@@ -166,7 +172,10 @@ impl ConsumerBuilder {
   }
 }
 
-pub struct Consumer<T, const MAX_CONSUMERS: usize> {
+pub struct Consumer<T, const MAX_CONSUMERS: usize>
+where
+  T: Copy,
+{
   mmap_ptr: *mut ShmQueue<MAX_CONSUMERS>,
   mmap_size: usize,
   id: usize,
@@ -174,7 +183,10 @@ pub struct Consumer<T, const MAX_CONSUMERS: usize> {
   read_handle: BroadcastReadHandle<T>,
 }
 
-impl<T, const MAX_CONSUMERS: usize> Consumer<T, MAX_CONSUMERS> {
+impl<T, const MAX_CONSUMERS: usize> Consumer<T, MAX_CONSUMERS>
+where
+  T: Copy,
+{
   fn new(
     name: CString,
     magic: u64,
@@ -226,7 +238,10 @@ impl<T, const MAX_CONSUMERS: usize> Consumer<T, MAX_CONSUMERS> {
   }
 }
 
-impl<T, const MAX_CONSUMERS: usize> Drop for Consumer<T, MAX_CONSUMERS> {
+impl<T, const MAX_CONSUMERS: usize> Drop for Consumer<T, MAX_CONSUMERS>
+where
+  T: Copy,
+{
   fn drop(&mut self) {
     unsafe {
       (*self.mmap_ptr).heartbeats.consumers.drop_consumer(self.id);

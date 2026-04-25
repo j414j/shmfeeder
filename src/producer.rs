@@ -1,17 +1,10 @@
-use std::{
-  ffi::CString,
-  io,
-  mem::{offset_of, size_of},
-  slice,
-  str::FromStr,
-  sync::atomic::Ordering,
-};
+use std::{ffi::CString, io, str::FromStr, sync::atomic::Ordering};
 
 use libc::ftruncate;
 
 use crate::{
   error::{ShmError, ShmResult},
-  heartbeats::{Heartbeats, ItemHeartbeat},
+  heartbeats::ItemHeartbeat,
   layout::{ShmQueue, ShmState},
   queue::{BroadCastQueue, BroadcastWriteHandle},
 };
@@ -63,7 +56,9 @@ fn init_queue_at_ptr<T, const MAX_CONSUMERS: usize>(
   version: u64,
   num_slots: usize,
   now_timestamp: u64,
-) {
+) where
+  T: Copy,
+{
   let queue = unsafe { &mut *(ptr as *mut ShmQueue<MAX_CONSUMERS>) };
 
   queue
@@ -105,7 +100,10 @@ fn setup_new_memory<T, const MAX_CONSUMERS: usize>(
   version: u64,
   num_slots: usize,
   now_timestamp: u64,
-) -> ShmResult<*mut ShmQueue<MAX_CONSUMERS>> {
+) -> ShmResult<*mut ShmQueue<MAX_CONSUMERS>>
+where
+  T: Copy,
+{
   let ptr = unsafe {
     libc::mmap(
       std::ptr::null_mut(),
@@ -143,7 +141,10 @@ fn setup_old_memory<T, const MAX_CONSUMERS: usize>(
   num_slots: usize,
   now_timestamp: u64,
   liveness_tolerance: u64,
-) -> ShmResult<*mut ShmQueue<MAX_CONSUMERS>> {
+) -> ShmResult<*mut ShmQueue<MAX_CONSUMERS>>
+where
+  T: Copy,
+{
   let ptr = unsafe {
     libc::mmap(
       std::ptr::null_mut(),
@@ -235,7 +236,10 @@ impl ProducerBuilder {
   pub fn build<T, const MAX_CONSUMERS: usize>(
     self,
     now_timestamp: u64,
-  ) -> ShmResult<Producer<T, MAX_CONSUMERS>> {
+  ) -> ShmResult<Producer<T, MAX_CONSUMERS>>
+  where
+    T: Copy,
+  {
     Producer::new(
       self.name,
       self.num_slots,
@@ -247,7 +251,10 @@ impl ProducerBuilder {
   }
 }
 
-pub struct Producer<T, const MAX_CONSUMERS: usize> {
+pub struct Producer<T, const MAX_CONSUMERS: usize>
+where
+  T: Copy,
+{
   mmap_ptr: *mut ShmQueue<MAX_CONSUMERS>,
   mmap_size: usize,
   fd: i32,
@@ -255,7 +262,10 @@ pub struct Producer<T, const MAX_CONSUMERS: usize> {
   write_handle: BroadcastWriteHandle<T>,
 }
 
-impl<T, const MAX_CONSUMERS: usize> Producer<T, MAX_CONSUMERS> {
+impl<T, const MAX_CONSUMERS: usize> Producer<T, MAX_CONSUMERS>
+where
+  T: Copy,
+{
   fn new(
     name: CString,
     num_slots: usize,
@@ -319,128 +329,17 @@ impl<T, const MAX_CONSUMERS: usize> Producer<T, MAX_CONSUMERS> {
     self.write_handle.commit_next_slot();
   }
 
-  pub fn print_shm(&self) {
-    let queue = unsafe { &*self.mmap_ptr };
-    let slot_layout = BroadCastQueue::<T>::slot_layout();
-    let header_size = size_of::<crate::layout::ShmHeader>();
-    let shm_queue_size = size_of::<ShmQueue<MAX_CONSUMERS>>();
-    let heartbeats_offset = offset_of!(ShmQueue<MAX_CONSUMERS>, heartbeats);
-    let heartbeats_size = size_of::<Heartbeats<MAX_CONSUMERS>>();
-    let producer_hb_offset = heartbeats_offset + offset_of!(Heartbeats<MAX_CONSUMERS>, producer);
-    let consumers_hb_offset = heartbeats_offset + offset_of!(Heartbeats<MAX_CONSUMERS>, consumers);
-    let queue_offset = queue.header.queue_offset;
-    let queue_base_offset = shm_queue_size;
-    let data_area_begin = queue_base_offset + queue_offset;
-    let n_slots = queue.header.n_slots;
-    let last_committed = queue.header.last_committed_slot.load(Ordering::Acquire);
-    let state = queue.header.state.load(Ordering::Acquire);
-    let state_name = match ShmState::from(state) {
-      ShmState::Starting => "Starting",
-      ShmState::Ready => "Ready",
-      ShmState::ShuttingDown => "ShuttingDown",
-      ShmState::Uninit => "Uninit",
-      ShmState::Invalid => "Invalid",
-    };
-
-    let mut boundaries = vec![
-      (0usize, format!("HEADER BEGIN (size = {header_size} bytes)")),
-      (
-        heartbeats_offset,
-        format!("HEARTBEATS BEGIN (size = {heartbeats_size} bytes)"),
-      ),
-      (producer_hb_offset, "PRODUCER HEARTBEAT".to_string()),
-      (consumers_hb_offset, "CONSUMER HEARTBEATS".to_string()),
-      (
-        queue_base_offset,
-        format!("SHMQUEUE END / DATA REGION BASE (size = {shm_queue_size} bytes)"),
-      ),
-      (
-        data_area_begin,
-        format!(
-          "DATA AREA BEGIN (aligned slot area, slot size = {} bytes, slots = {})",
-          slot_layout.size, n_slots
-        ),
-      ),
-    ];
-
-    for slot_idx in 0..n_slots {
-      boundaries.push((
-        data_area_begin + slot_idx * slot_layout.size,
-        format!("SLOT {slot_idx} BEGIN"),
-      ));
-    }
-    boundaries.sort_by_key(|(offset, _)| *offset);
-
-    println!("========== SHARED MEMORY DUMP ==========");
-    println!("base_ptr            = {:p}", self.mmap_ptr);
-    println!("total_size          = {} bytes", self.mmap_size);
-    println!("header_size         = {} bytes", header_size);
-    println!("shm_queue_size      = {} bytes", shm_queue_size);
-    println!("heartbeats_offset   = 0x{heartbeats_offset:08x}");
-    println!("heartbeats_size     = {} bytes", heartbeats_size);
-    println!("queue_base_offset   = 0x{queue_base_offset:08x}");
-    println!("queue_offset        = 0x{queue_offset:08x} (relative to queue_base_offset)");
-    println!("data_area_begin     = 0x{data_area_begin:08x}");
-    println!("slot_size           = {} bytes", slot_layout.size);
-    println!("slot_align          = {} bytes", slot_layout.align);
-    println!("num_slots           = {}", n_slots);
-    println!("last_committed_slot = {}", last_committed);
-    println!("state               = {} ({state_name})", state);
-    println!("----------------------------------------");
-    println!("Section map:");
-    for (offset, label) in &boundaries {
-      println!("  0x{offset:08x}  {label}");
-    }
-    println!("----------------------------------------");
-
-    let bytes = unsafe { slice::from_raw_parts(self.mmap_ptr as *const u8, self.mmap_size) };
-    let mut next_boundary_idx = 0usize;
-
-    for line_start in (0..bytes.len()).step_by(16) {
-      while next_boundary_idx < boundaries.len() && boundaries[next_boundary_idx].0 <= line_start {
-        let (offset, label) = &boundaries[next_boundary_idx];
-        println!("---- 0x{offset:08x} {label} ----");
-        next_boundary_idx += 1;
-      }
-
-      let line_end = usize::min(line_start + 16, bytes.len());
-      let line = &bytes[line_start..line_end];
-
-      print!("{line_start:08x}: ");
-      for idx in 0..16 {
-        if let Some(byte) = line.get(idx) {
-          print!("{byte:02x} ");
-        } else {
-          print!("   ");
-        }
-      }
-
-      print!("|");
-      for byte in line {
-        let ch = if byte.is_ascii_graphic() || *byte == b' ' {
-          *byte as char
-        } else {
-          '.'
-        };
-        print!("{ch}");
-      }
-      print!("|");
-
-      let mut inline_boundary_idx = next_boundary_idx;
-      while inline_boundary_idx < boundaries.len() && boundaries[inline_boundary_idx].0 < line_end {
-        let (offset, label) = &boundaries[inline_boundary_idx];
-        print!("  <-- 0x{offset:08x} {label}");
-        inline_boundary_idx += 1;
-      }
-
-      println!();
-    }
-
-    println!("========== END SHARED MEMORY DUMP ==========");
+  #[inline]
+  #[cfg(debug_assertions)]
+  pub fn debug_print_queue(&self) {
+    crate::layout::debug_print_shm::<T, _>(unsafe { &*self.mmap_ptr });
   }
 }
 
-impl<T, const MAX_CONSUMERS: usize> Drop for Producer<T, MAX_CONSUMERS> {
+impl<T, const MAX_CONSUMERS: usize> Drop for Producer<T, MAX_CONSUMERS>
+where
+  T: Copy,
+{
   fn drop(&mut self) {
     unsafe {
       libc::munmap(self.mmap_ptr as *mut libc::c_void, self.mmap_size);
