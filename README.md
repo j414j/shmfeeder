@@ -13,7 +13,7 @@ to read the stream independently.
 - Single producer with multiple independent consumers.
 - Data lives directly in shared memory; reads can either copy values out or
   borrow them zero-copy.
-- Producer and consumer liveness checks through heartbeats by default.
+- Explicit producer and consumer liveness checks through heartbeats by default.
 - Compatibility guards through application-defined magic and version fields.
 - POSIX shared-memory implementation using `shm_open`, `mmap`, and
   `ftruncate`.
@@ -68,14 +68,21 @@ Timestamp arguments are plain `u64` values. The crate does not choose a clock;
 all producers and consumers should use the same units. The examples use
 microseconds since the Unix epoch.
 
+Ongoing heartbeat maintenance is explicit. Producers should call
+`update_heartbeat` periodically and, when consumer heartbeats are enabled,
+`check_any_consumer_alive` if they need to know whether any consumers are still
+attached. Consumers should call `check_producer_alive` periodically and, when
+consumer heartbeats are enabled, `update_heartbeat` to keep their own slot live.
+Read and write methods do not update or check heartbeats.
+
 Feature flags:
 
 - `no-consumer-heartbeat`: keep producer heartbeats but disable consumer
   tracking.
 - `no-heartbeats`: disable all heartbeat support.
 
-When `no-heartbeats` is enabled, `build`, `commit_next_slot`, and read methods
-do not take timestamp arguments.
+When `no-heartbeats` is enabled, `build` does not take a timestamp argument and
+heartbeat update/check methods are unavailable.
 
 ## Producer Example
 
@@ -121,7 +128,9 @@ unsafe {
     ask: 101.30,
   });
 }
-producer.commit_next_slot(now_micros())?;
+producer.commit_next_slot();
+producer.update_heartbeat(now_micros());
+producer.check_any_consumer_alive(now_micros())?;
 # Ok::<(), shmfeeder::ShmError>(())
 ```
 
@@ -160,7 +169,11 @@ let mut consumer: Consumer<Tick> = ConsumerBuilder::new("/shmfeeder-ticks")?
   .with_liveness_tolerance(2_000_000)
   .build(now_micros())?;
 
-match consumer.try_read(now_micros()) {
+let now = now_micros();
+consumer.check_producer_alive(now)?;
+consumer.update_heartbeat(now);
+
+match consumer.try_read() {
   Ok(tick) => println!("{tick:?}"),
   Err(ShmError::NoData) => {}
   Err(err) => return Err(err),
@@ -179,8 +192,10 @@ Most APIs return `ShmResult<T>`, an alias for `Result<T, ShmError>`. Common
 recoverable states include:
 
 - `ShmError::NoData`: no unread item is currently available.
-- `ShmError::NoActiveProducer`: the producer heartbeat is stale.
-- `ShmError::NoActiveConsumer`: the producer did not find any live consumers.
+- `ShmError::NoActiveProducer`: `check_producer_alive` found a stale producer
+  heartbeat.
+- `ShmError::NoActiveConsumer`: `check_any_consumer_alive` did not find any
+  live consumers.
 - `ShmError::QueueAlreadyAcquired(pid)`: another producer appears to own the
   queue.
 

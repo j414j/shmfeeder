@@ -40,21 +40,19 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
   loop {
     #[cfg(not(feature = "no-heartbeats"))]
-    let result = consumer.try_read(now_micros());
+    {
+      let now = now_micros();
+      consumer.check_producer_alive(now)?;
+      #[cfg(not(feature = "no-consumer-heartbeat"))]
+      consumer.update_heartbeat(now);
+    }
 
-    #[cfg(feature = "no-heartbeats")]
     let result = consumer.try_read();
 
     match result {
       Ok(quote) => println!("received {quote:?}"),
       Err(ShmError::NoData) => thread::sleep(Duration::from_millis(10)),
-      Err(ShmError::NoActiveProducer) => {
-        eprintln!("producer heartbeat is stale");
-        break;
-      }
       Err(err) => return Err(err.into()),
     }
   }
-
-  Ok(())
 }

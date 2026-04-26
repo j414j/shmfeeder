@@ -4,8 +4,6 @@ use libc::ftruncate;
 
 #[cfg(not(feature = "no-heartbeats"))]
 use crate::heartbeats::ItemHeartbeat;
-#[cfg(debug_assertions)]
-use crate::layout::debug_print_shm;
 use crate::{
   error::{ShmError, ShmResult},
   layout::{ShmQueue, ShmState, calculate_data_buffer_offset_queue_begin},
@@ -291,7 +289,7 @@ impl ProducerBuilder {
 
   #[cfg(not(feature = "no-heartbeats"))]
   /// Sets the liveness tolerance, in the same timestamp units passed to
-  /// [`ProducerBuilder::build`] and [`Producer::commit_next_slot`].
+  /// [`ProducerBuilder::build`] and heartbeat methods.
   ///
   /// The default is `1000`. If you pass microsecond timestamps, this means one
   /// millisecond.
@@ -348,10 +346,6 @@ where
   mmap_ptr: *mut ShmQueue,
   mmap_size: usize,
   fd: i32,
-  #[cfg(not(feature = "no-heartbeats"))]
-  liveness_check_periods: u64,
-  #[cfg(not(feature = "no-heartbeats"))]
-  last_liveness_check: u64,
   #[cfg(not(feature = "no-consumer-heartbeat"))]
   liveness_tolerance: u64,
   write_handle: BroadcastWriteHandle<T>,
@@ -414,9 +408,6 @@ where
       )?,
     };
 
-    #[cfg(debug_assertions)]
-    debug_print_shm::<T>(unsafe { &*ptr });
-
     let queue = unsafe {
       BroadCastQueue::from_raw_parts(
         ptr.byte_add((*ptr).header.queue_offset) as *mut u8,
@@ -433,10 +424,6 @@ where
       write_handle,
       #[cfg(not(feature = "no-consumer-heartbeat"))]
       liveness_tolerance,
-      #[cfg(not(feature = "no-heartbeats"))]
-      last_liveness_check: now_timestamp,
-      #[cfg(not(feature = "no-heartbeats"))]
-      liveness_check_periods: liveness_tolerance / 2,
     })
   }
 
@@ -450,38 +437,36 @@ where
     self.write_handle.get_next_buffer()
   }
 
-  #[inline]
-  #[cfg(not(feature = "no-heartbeats"))]
   /// Publishes the slot returned by [`Producer::get_next_buffer`].
   ///
-  /// `now_timestamp` is also used to refresh the producer heartbeat. Once enough
-  /// time has passed, the producer checks whether at least one consumer is still
-  /// alive and returns [`ShmError::NoActiveConsumer`] if none are.
-  pub fn commit_next_slot(&mut self, now_timestamp: u64) -> ShmResult<()> {
+  /// This does not update or check heartbeats. When heartbeat support is
+  /// enabled, call `update_heartbeat` and `check_any_consumer_alive` on the
+  /// cadence required by your application.
+  pub fn commit_next_slot(&mut self) {
     self.write_handle.commit_next_slot();
-
-    if now_timestamp.saturating_sub(self.last_liveness_check) > self.liveness_check_periods {
-      let queue = unsafe { &mut *self.mmap_ptr };
-      queue.heartbeats.producer.heartbeat.update(now_timestamp);
-      self.last_liveness_check = now_timestamp;
-      #[cfg(not(feature = "no-consumer-heartbeat"))]
-      if !queue
-        .heartbeats
-        .consumers
-        .is_any_consumer_alive(now_timestamp, self.liveness_tolerance)
-      {
-        return Err(ShmError::NoActiveConsumer);
-      }
-    }
-
-    Ok(())
   }
 
   #[inline]
-  #[cfg(feature = "no-heartbeats")]
-  /// Publishes the slot returned by [`Producer::get_next_buffer`].
-  pub fn commit_next_slot(&mut self) -> ShmResult<()> {
-    self.write_handle.commit_next_slot();
+  #[cfg(not(feature = "no-heartbeats"))]
+  /// Updates this producer's heartbeat timestamp.
+  pub fn update_heartbeat(&mut self, now_timestamp: u64) {
+    let queue = unsafe { &mut *self.mmap_ptr };
+    queue.heartbeats.producer.heartbeat.update(now_timestamp);
+  }
+
+  #[inline]
+  #[cfg(not(feature = "no-consumer-heartbeat"))]
+  /// Checks whether at least one consumer heartbeat is alive.
+  pub fn check_any_consumer_alive(&mut self, now_timestamp: u64) -> ShmResult<()> {
+    let queue = unsafe { &mut *self.mmap_ptr };
+    if !queue
+      .heartbeats
+      .consumers
+      .is_any_consumer_alive(now_timestamp, self.liveness_tolerance)
+    {
+      return Err(ShmError::NoActiveConsumer);
+    }
+
     Ok(())
   }
 

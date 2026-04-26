@@ -166,7 +166,7 @@ impl ConsumerBuilder {
   }
   #[cfg(not(feature = "no-heartbeats"))]
   /// Sets the producer liveness tolerance, in the same timestamp units passed to
-  /// [`ConsumerBuilder::build`] and read methods.
+  /// [`ConsumerBuilder::build`] and heartbeat methods.
   ///
   /// The default is `1000`. If you pass microsecond timestamps, this means one
   /// millisecond.
@@ -212,10 +212,6 @@ where
   fd: i32,
   #[cfg(not(feature = "no-heartbeats"))]
   liveness_tolerance: u64,
-  #[cfg(not(feature = "no-heartbeats"))]
-  liveness_check_periods: u64,
-  #[cfg(not(feature = "no-heartbeats"))]
-  last_liveness_check: u64,
   read_handle: BroadcastReadHandle<T>,
 }
 
@@ -271,10 +267,6 @@ where
       read_handle,
       #[cfg(not(feature = "no-heartbeats"))]
       liveness_tolerance,
-      #[cfg(not(feature = "no-heartbeats"))]
-      liveness_check_periods: liveness_tolerance / 2,
-      #[cfg(not(feature = "no-heartbeats"))]
-      last_liveness_check: now_timestamp,
     })
   }
 
@@ -282,6 +274,7 @@ where
   /// Attempts to read the next item by borrowing it directly from shared memory.
   ///
   /// Returns [`ShmError::NoData`] when no newer slot is currently available.
+  /// This does not update this consumer's heartbeat or check producer liveness.
   ///
   /// # Safety
   ///
@@ -290,46 +283,43 @@ where
   /// this reference. Use this only for very short operations where the producer
   /// cannot practically lap the consumer, or prefer [`Consumer::try_read`] to
   /// copy the value out.
-  pub unsafe fn try_read_zero_copy(
-    &mut self,
-    #[cfg(not(feature = "no-heartbeats"))] now_timestamp: u64,
-  ) -> ShmResult<&T> {
-    #[cfg(not(feature = "no-heartbeats"))]
-    if now_timestamp - self.last_liveness_check > self.liveness_check_periods {
-      let queue = unsafe { &mut *self.mmap_ptr };
-      if !queue
-        .heartbeats
-        .producer
-        .heartbeat
-        .is_alive(now_timestamp, self.liveness_tolerance)
-      {
-        return Err(ShmError::NoActiveProducer);
-      }
-      #[cfg(not(feature = "no-consumer-heartbeat"))]
-      queue
-        .heartbeats
-        .consumers
-        .update_heartbeat(self.id, now_timestamp);
-      self.last_liveness_check = now_timestamp;
-    }
+  pub unsafe fn try_read_zero_copy(&mut self) -> ShmResult<&T> {
     unsafe { self.read_handle.try_read() }.ok_or(ShmError::NoData)
   }
   #[inline]
   /// Attempts to read the next item by copying it out of shared memory.
   ///
   /// Returns [`ShmError::NoData`] when no newer slot is currently available.
-  pub fn try_read(
-    &mut self,
-    #[cfg(not(feature = "no-heartbeats"))] now_timestamp: u64,
-  ) -> ShmResult<T> {
-    unsafe {
-      self
-        .try_read_zero_copy(
-          #[cfg(not(feature = "no-heartbeats"))]
-          now_timestamp,
-        )
-        .copied()
+  /// This does not update this consumer's heartbeat or check producer liveness.
+  pub fn try_read(&mut self) -> ShmResult<T> {
+    unsafe { self.try_read_zero_copy().copied() }
+  }
+
+  #[inline]
+  #[cfg(not(feature = "no-heartbeats"))]
+  /// Checks whether the producer heartbeat is alive.
+  pub fn check_producer_alive(&mut self, now_timestamp: u64) -> ShmResult<()> {
+    let queue = unsafe { &mut *self.mmap_ptr };
+    if !queue
+      .heartbeats
+      .producer
+      .heartbeat
+      .is_alive(now_timestamp, self.liveness_tolerance)
+    {
+      return Err(ShmError::NoActiveProducer);
     }
+    Ok(())
+  }
+
+  #[inline]
+  #[cfg(not(feature = "no-consumer-heartbeat"))]
+  /// Updates this consumer's heartbeat timestamp.
+  pub fn update_heartbeat(&mut self, now_timestamp: u64) {
+    let queue = unsafe { &mut *self.mmap_ptr };
+    queue
+      .heartbeats
+      .consumers
+      .update_heartbeat(self.id, now_timestamp);
   }
 }
 

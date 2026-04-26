@@ -4,9 +4,6 @@ use std::{thread, time::Duration};
 
 use shmfeeder::{Producer, ProducerBuilder};
 
-#[cfg(not(feature = "no-heartbeats"))]
-use shmfeeder::ShmError;
-
 const QUEUE_NAME: &str = "/shmfeeder-example";
 const MAGIC: u64 = 0x5348_4d46;
 const VERSION: u64 = 1;
@@ -56,17 +53,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
       slot.write(quote);
     }
 
-    #[cfg(not(feature = "no-heartbeats"))]
-    match producer.commit_next_slot(now_micros()) {
-      Ok(()) => {}
-      Err(ShmError::NoActiveConsumer) => {
-        eprintln!("published {quote:?}; no active consumers are currently attached");
-      }
-      Err(err) => return Err(err.into()),
-    }
+    producer.commit_next_slot();
 
-    #[cfg(feature = "no-heartbeats")]
-    producer.commit_next_slot()?;
+    #[cfg(not(feature = "no-heartbeats"))]
+    producer.update_heartbeat(now_micros());
+
+    #[cfg(not(feature = "no-consumer-heartbeat"))]
+    if producer.check_any_consumer_alive(now_micros()).is_err() {
+      eprintln!("published {quote:?}; no active consumers are currently attached");
+    }
 
     println!("published {quote:?}");
     thread::sleep(Duration::from_millis(250));

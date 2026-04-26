@@ -22,9 +22,10 @@
 //!
 //! Heartbeats are enabled by default. Producers reject takeover while another
 //! producer appears alive, consumers can detect a dead producer, and producers
-//! can detect when no consumers are alive. Disable heartbeat support with the
-//! `no-heartbeats` feature, or only disable consumer heartbeats with
-//! `no-consumer-heartbeat`.
+//! can detect when no consumers are alive. Runtime heartbeat maintenance is
+//! explicit: call the heartbeat update and check methods on the cadence required
+//! by your application. Disable heartbeat support with the `no-heartbeats`
+//! feature, or only disable consumer heartbeats with `no-consumer-heartbeat`.
 //!
 //! # Example
 //!
@@ -55,11 +56,18 @@
 //!     .as_micros() as u64
 //! }
 //!
-//! let mut producer: Producer<Tick> = ProducerBuilder::new("/ticks", 1024)?
+//! let producer = ProducerBuilder::new("/ticks", 1024)?
 //!   .with_magic(0x5449_434b)
-//!   .with_version(1)
-//!   .with_max_consumers(8)
-//!   .build(now_micros())?;
+//!   .with_version(1);
+//!
+//! #[cfg(not(feature = "no-consumer-heartbeat"))]
+//! let producer = producer.with_max_consumers(8);
+//!
+//! #[cfg(not(feature = "no-heartbeats"))]
+//! let mut producer: Producer<Tick> = producer.build(now_micros())?;
+//!
+//! #[cfg(feature = "no-heartbeats")]
+//! let mut producer: Producer<Tick> = producer.build()?;
 //!
 //! let slot = producer.get_next_buffer();
 //! unsafe {
@@ -68,7 +76,13 @@
 //!     price: 101.25,
 //!   });
 //! }
-//! producer.commit_next_slot(now_micros())?;
+//! producer.commit_next_slot();
+//!
+//! #[cfg(not(feature = "no-heartbeats"))]
+//! producer.update_heartbeat(now_micros());
+//!
+//! #[cfg(not(feature = "no-consumer-heartbeat"))]
+//! producer.check_any_consumer_alive(now_micros())?;
 //! # Ok::<(), shmfeeder::ShmError>(())
 //! ```
 //!
@@ -92,12 +106,26 @@
 //!     .as_micros() as u64
 //! }
 //!
-//! let mut consumer: Consumer<Tick> = ConsumerBuilder::new("/ticks")?
+//! let consumer = ConsumerBuilder::new("/ticks")?
 //!   .with_magic(0x5449_434b)
-//!   .with_version(1)
-//!   .build(now_micros())?;
+//!   .with_version(1);
 //!
-//! match consumer.try_read(now_micros()) {
+//! #[cfg(not(feature = "no-heartbeats"))]
+//! let mut consumer: Consumer<Tick> = consumer.build(now_micros())?;
+//!
+//! #[cfg(feature = "no-heartbeats")]
+//! let mut consumer: Consumer<Tick> = consumer.build()?;
+//!
+//! #[cfg(not(feature = "no-heartbeats"))]
+//! let now = now_micros();
+//!
+//! #[cfg(not(feature = "no-heartbeats"))]
+//! consumer.check_producer_alive(now)?;
+//!
+//! #[cfg(not(feature = "no-consumer-heartbeat"))]
+//! consumer.update_heartbeat(now);
+//!
+//! match consumer.try_read() {
 //!   Ok(tick) => println!("{} {}", tick.sequence, tick.price),
 //!   Err(ShmError::NoData) => {}
 //!   Err(err) => return Err(err),
