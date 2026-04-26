@@ -17,9 +17,9 @@ impl D {
   pub fn new(i: i64) -> Self {
     Self {
       a: i,
-      b: i + 1,
-      c: i + 2,
-      d: i + 3,
+      b: i << 1,
+      c: i << 2,
+      d: i << 3,
     }
   }
 }
@@ -32,7 +32,7 @@ pub fn now() -> u64 {
 
 #[test]
 fn main() {
-  let producer = ProducerBuilder::new("/test-queue", 64);
+  let producer = ProducerBuilder::new("/test-queue", 4);
   if producer.is_err() {
     eprintln!("error during init: {:?}", producer.err());
     return;
@@ -41,9 +41,14 @@ fn main() {
   let builder = producer.unwrap();
   let builder = builder.with_magic(0x7887_7887).with_version(1);
   #[cfg(not(feature = "no-heartbeats"))]
-  let builder = builder
-    .with_liveness_tolerance(10_000_000) // 10 second liveness check
-    .build(now());
+  let builder = {
+    let builder = builder.with_liveness_tolerance(10_000_000); // 10 second liveness check
+
+    #[cfg(not(feature = "no-consumer-heartbeat"))]
+    let builder = builder.with_max_consumers(2);
+
+    builder.build(now())
+  };
   #[cfg(feature = "no-heartbeats")]
   let builder = builder.build();
 
@@ -52,7 +57,7 @@ fn main() {
     return;
   }
 
-  let mut producer: Producer<D, 64> = builder.unwrap();
+  let mut producer: Producer<D> = builder.unwrap();
   for i in 0..9000 {
     let buffer = producer.get_next_buffer();
     unsafe { buffer.write(D::new(i)) };

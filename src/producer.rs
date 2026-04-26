@@ -6,8 +6,13 @@ use libc::ftruncate;
 use crate::heartbeats::ItemHeartbeat;
 use crate::{
   error::{ShmError, ShmResult},
-  layout::{ShmQueue, ShmState},
+  layout::{ShmQueue, ShmState, calculate_data_buffer_offset_queue_begin, debug_print_shm},
   queue::{BroadCastQueue, BroadcastWriteHandle},
+};
+#[cfg(not(feature = "no-consumer-heartbeat"))]
+use crate::{
+  heartbeats::{ConsumerHeartbeat, ConsumerHeartbeatsMeta},
+  layout::calculate_consumer_heartbeat_offset_meta_begin,
 };
 enum ConnectedMemoryType {
   New,
@@ -50,16 +55,17 @@ fn try_init_shared_memory(name: &CString, size: usize) -> ShmResult<(ConnectedMe
   }
 }
 
-fn init_queue_at_ptr<T, const MAX_CONSUMERS: usize, const IS_NEW: bool>(
+fn init_queue_at_ptr<T, const IS_NEW: bool>(
   ptr: *mut libc::c_void,
   magic: u64,
   version: u64,
   num_slots: usize,
+  #[cfg(not(feature = "no-consumer-heartbeat"))] max_consumers: usize,
   #[cfg(not(feature = "no-heartbeats"))] now_timestamp: u64,
 ) where
   T: Copy,
 {
-  let queue = unsafe { &mut *(ptr as *mut ShmQueue<MAX_CONSUMERS>) };
+  let queue = unsafe { &mut *(ptr as *mut ShmQueue) };
 
   queue
     .header
@@ -74,13 +80,19 @@ fn init_queue_at_ptr<T, const MAX_CONSUMERS: usize, const IS_NEW: bool>(
       .last_committed_slot
       .store(num_slots - 1, Ordering::Release);
   }
-  let slot_layout = BroadCastQueue::<T>::slot_layout();
-  let slot_begin = unsafe { ptr.byte_add(std::mem::size_of::<ShmQueue<MAX_CONSUMERS>>()) };
-  // get an aligned pointer to slots array
-  let slot_ptr =
-    ((slot_begin as usize + slot_layout.align - 1) & !(slot_layout.align - 1)) as *mut libc::c_void;
 
-  queue.header.queue_offset = unsafe { slot_ptr.byte_offset_from_unsigned(slot_begin) };
+  #[cfg(not(feature = "no-consumer-heartbeat"))]
+  {
+    let consumer_buffer_offset =
+      calculate_consumer_heartbeat_offset_meta_begin(ptr as *mut ShmQueue);
+    queue.heartbeats.consumers = ConsumerHeartbeatsMeta::new(max_consumers, consumer_buffer_offset);
+  }
+
+  queue.header.queue_offset = calculate_data_buffer_offset_queue_begin::<T>(
+    ptr as *mut ShmQueue,
+    #[cfg(not(feature = "no-consumer-heartbeat"))]
+    max_consumers,
+  );
 
   #[cfg(not(feature = "no-heartbeats"))]
   {
@@ -94,15 +106,16 @@ fn init_queue_at_ptr<T, const MAX_CONSUMERS: usize, const IS_NEW: bool>(
     .store(ShmState::Ready as u8, Ordering::Release);
 }
 
-fn setup_new_memory<T, const MAX_CONSUMERS: usize>(
+fn setup_new_memory<T>(
   name: &CString,
   fd: i32,
   size: usize,
   magic: u64,
   version: u64,
   num_slots: usize,
+  #[cfg(not(feature = "no-consumer-heartbeat"))] max_consumers: usize,
   #[cfg(not(feature = "no-heartbeats"))] now_timestamp: u64,
-) -> ShmResult<*mut ShmQueue<MAX_CONSUMERS>>
+) -> ShmResult<*mut ShmQueue>
 where
   T: Copy,
 {
@@ -129,27 +142,30 @@ where
     libc::memset(ptr, 0, size);
   }
 
-  init_queue_at_ptr::<T, MAX_CONSUMERS, true>(
+  init_queue_at_ptr::<T, true>(
     ptr,
     magic,
     version,
     num_slots,
+    #[cfg(not(feature = "no-consumer-heartbeat"))]
+    max_consumers,
     #[cfg(not(feature = "no-heartbeats"))]
     now_timestamp,
   );
 
-  Ok(ptr as *mut ShmQueue<MAX_CONSUMERS>)
+  Ok(ptr as *mut ShmQueue)
 }
 
-fn setup_old_memory<T, const MAX_CONSUMERS: usize>(
+fn setup_old_memory<T>(
   fd: i32,
   size: usize,
   magic: u64,
   version: u64,
   num_slots: usize,
+  #[cfg(not(feature = "no-consumer-heartbeat"))] max_consumers: usize,
   #[cfg(not(feature = "no-heartbeats"))] now_timestamp: u64,
   #[cfg(not(feature = "no-heartbeats"))] liveness_tolerance: u64,
-) -> ShmResult<*mut ShmQueue<MAX_CONSUMERS>>
+) -> ShmResult<*mut ShmQueue>
 where
   T: Copy,
 {
@@ -170,7 +186,7 @@ where
     return Err(io::Error::last_os_error().into());
   }
 
-  let queue = unsafe { &mut *(ptr as *mut ShmQueue<MAX_CONSUMERS>) };
+  let queue = unsafe { &mut *(ptr as *mut ShmQueue) };
 
   let queue_state = queue.header.state.load(Ordering::Acquire);
 
@@ -198,22 +214,29 @@ where
       if queue.header.n_slots != num_slots {
         return Err(ShmError::CorruptedQueue);
       }
+
+      #[cfg(not(feature = "no-consumer-heartbeat"))]
+      if queue.heartbeats.consumers.max_consumers != max_consumers {
+        return Err(ShmError::CorruptedQueue);
+      }
     }
     ShmState::Invalid => return Err(ShmError::CorruptedQueue),
     ShmState::Uninit => {}
   }
 
   // ready to take ownership of queue and initialise it as new
-  init_queue_at_ptr::<T, MAX_CONSUMERS, false>(
+  init_queue_at_ptr::<T, false>(
     ptr,
     magic,
     version,
     num_slots,
+    #[cfg(not(feature = "no-consumer-heartbeat"))]
+    max_consumers,
     #[cfg(not(feature = "no-heartbeats"))]
     now_timestamp,
   );
 
-  Ok(ptr as *mut ShmQueue<MAX_CONSUMERS>)
+  Ok(ptr as *mut ShmQueue)
 }
 
 pub struct ProducerBuilder {
@@ -223,6 +246,8 @@ pub struct ProducerBuilder {
   version: u64,
   #[cfg(not(feature = "no-heartbeats"))]
   liveness_tolerance: u64,
+  #[cfg(not(feature = "no-consumer-heartbeat"))]
+  max_consumers: usize,
 }
 
 impl ProducerBuilder {
@@ -236,6 +261,8 @@ impl ProducerBuilder {
       version: 0,
       #[cfg(not(feature = "no-heartbeats"))]
       liveness_tolerance: 1000,
+      #[cfg(not(feature = "no-consumer-heartbeat"))]
+      max_consumers: 32,
     })
   }
 
@@ -253,10 +280,17 @@ impl ProducerBuilder {
     self.liveness_tolerance = liveness_tolerance;
     self
   }
-  pub fn build<T, const MAX_CONSUMERS: usize>(
+
+  #[cfg(not(feature = "no-consumer-heartbeat"))]
+  pub fn with_max_consumers(mut self, max_consumers: usize) -> Self {
+    self.max_consumers = max_consumers;
+    self
+  }
+
+  pub fn build<T>(
     self,
     #[cfg(not(feature = "no-heartbeats"))] now_timestamp: u64,
-  ) -> ShmResult<Producer<T, MAX_CONSUMERS>>
+  ) -> ShmResult<Producer<T>>
   where
     T: Copy,
   {
@@ -265,6 +299,8 @@ impl ProducerBuilder {
       self.num_slots,
       self.magic,
       self.version,
+      #[cfg(not(feature = "no-consumer-heartbeat"))]
+      self.max_consumers,
       #[cfg(not(feature = "no-heartbeats"))]
       now_timestamp,
       #[cfg(not(feature = "no-heartbeats"))]
@@ -273,11 +309,11 @@ impl ProducerBuilder {
   }
 }
 
-pub struct Producer<T, const MAX_CONSUMERS: usize>
+pub struct Producer<T>
 where
   T: Copy,
 {
-  mmap_ptr: *mut ShmQueue<MAX_CONSUMERS>,
+  mmap_ptr: *mut ShmQueue,
   mmap_size: usize,
   fd: i32,
   #[cfg(not(feature = "no-heartbeats"))]
@@ -289,7 +325,7 @@ where
   write_handle: BroadcastWriteHandle<T>,
 }
 
-impl<T, const MAX_CONSUMERS: usize> Producer<T, MAX_CONSUMERS>
+impl<T> Producer<T>
 where
   T: Copy,
 {
@@ -298,35 +334,47 @@ where
     num_slots: usize,
     magic: u64,
     version: u64,
+    #[cfg(not(feature = "no-consumer-heartbeat"))] max_consumers: usize,
     #[cfg(not(feature = "no-heartbeats"))] now_timestamp: u64,
     #[cfg(not(feature = "no-heartbeats"))] liveness_tolerance: u64,
   ) -> ShmResult<Self> {
     let queue_layout = BroadCastQueue::<T>::slot_layout();
 
-    let size = std::mem::size_of::<ShmQueue<MAX_CONSUMERS>>()
+    #[cfg(not(feature = "no-consumer-heartbeat"))]
+    let consumer_heartbeat_buffer_size =
+      size_of::<ConsumerHeartbeat>() * max_consumers + align_of::<ConsumerHeartbeat>();
+    #[cfg(feature = "no-consumer-heartbeat")]
+    let consumer_heartbeat_buffer_size = 0;
+
+    let size = std::mem::size_of::<ShmQueue>()
       + queue_layout.size * num_slots
       + queue_layout.align
+      + consumer_heartbeat_buffer_size
       - 1;
 
     let (memory_type, fd) = try_init_shared_memory(&name, size)?;
     let ptr = match memory_type {
-      ConnectedMemoryType::New => setup_new_memory::<T, _>(
+      ConnectedMemoryType::New => setup_new_memory::<T>(
         &name,
         fd,
         size,
         magic,
         version,
         num_slots,
+        #[cfg(not(feature = "no-consumer-heartbeat"))]
+        max_consumers,
         #[cfg(not(feature = "no-heartbeats"))]
         now_timestamp,
       )?,
 
-      ConnectedMemoryType::Old => setup_old_memory::<T, _>(
+      ConnectedMemoryType::Old => setup_old_memory::<T>(
         fd,
         size,
         magic,
         version,
         num_slots,
+        #[cfg(not(feature = "no-consumer-heartbeat"))]
+        max_consumers,
         #[cfg(not(feature = "no-heartbeats"))]
         now_timestamp,
         #[cfg(not(feature = "no-heartbeats"))]
@@ -334,11 +382,11 @@ where
       )?,
     };
 
+    debug_print_shm::<T>(unsafe { &*ptr });
+
     let queue = unsafe {
       BroadCastQueue::from_raw_parts(
-        ptr
-          .byte_add(std::mem::size_of::<ShmQueue<MAX_CONSUMERS>>())
-          .byte_add((*ptr).header.queue_offset) as *mut u8,
+        ptr.byte_add((*ptr).header.queue_offset) as *mut u8,
         queue_layout.size * num_slots,
         &mut (*ptr).header.last_committed_slot,
       )?
@@ -396,11 +444,11 @@ where
   #[inline]
   #[cfg(debug_assertions)]
   pub fn debug_print_queue(&self) {
-    crate::layout::debug_print_shm::<T, _>(unsafe { &*self.mmap_ptr });
+    crate::layout::debug_print_shm::<T>(unsafe { &*self.mmap_ptr });
   }
 }
 
-impl<T, const MAX_CONSUMERS: usize> Drop for Producer<T, MAX_CONSUMERS>
+impl<T> Drop for Producer<T>
 where
   T: Copy,
 {

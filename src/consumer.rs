@@ -15,17 +15,17 @@ fn try_init_shared_memory(name: &CString) -> ShmResult<i32> {
   }
 }
 
-fn try_attach_shared_memory<T, const MAX_CONSUMERS: usize>(
+fn try_attach_shared_memory<T>(
   fd: i32,
   magic: u64,
   version: u64,
   #[cfg(not(feature = "no-heartbeats"))] now_timestamp: u64,
   #[cfg(not(feature = "no-heartbeats"))] liveness_tolerance: u64,
-) -> ShmResult<(*mut ShmQueue<MAX_CONSUMERS>, usize)>
+) -> ShmResult<(*mut ShmQueue, usize)>
 where
   T: Copy,
 {
-  let initial_size = std::mem::size_of::<ShmQueue<MAX_CONSUMERS>>();
+  let initial_size = std::mem::size_of::<ShmQueue>();
   let ptr = unsafe {
     libc::mmap(
       std::ptr::null_mut(),
@@ -43,7 +43,7 @@ where
     return Err(io::Error::last_os_error().into());
   }
 
-  let queue = unsafe { &mut *(ptr as *mut ShmQueue<MAX_CONSUMERS>) };
+  let queue = unsafe { &mut *(ptr as *mut ShmQueue) };
 
   let queue_state = queue.header.state.load(Ordering::Acquire);
 
@@ -85,7 +85,7 @@ where
       let n_slots = queue.header.n_slots;
       let per_slot_size = BroadCastQueue::<T>::slot_layout().size;
 
-      let final_queue_size = initial_size + queue.header.queue_offset + n_slots * per_slot_size;
+      let final_queue_size = queue.header.queue_offset + n_slots * per_slot_size;
       let munmap = unsafe { libc::munmap(ptr, initial_size) };
 
       if munmap != 0 {
@@ -118,10 +118,7 @@ where
       #[cfg(feature = "no-consumer-heartbeat")]
       let consumer_heartbeat = 0;
 
-      Ok((
-        final_mmap as *mut ShmQueue<MAX_CONSUMERS>,
-        consumer_heartbeat,
-      ))
+      Ok((final_mmap as *mut ShmQueue, consumer_heartbeat))
     }
     ShmState::Invalid => Err(ShmError::CorruptedQueue),
   }
@@ -161,10 +158,10 @@ impl ConsumerBuilder {
     self.liveness_tolerance = liveness_tolerance;
     self
   }
-  pub fn build<T, const MAX_CONSUMERS: usize>(
+  pub fn build<T>(
     self,
     #[cfg(not(feature = "no-heartbeats"))] now_timestamp: u64,
-  ) -> ShmResult<Consumer<T, MAX_CONSUMERS>>
+  ) -> ShmResult<Consumer<T>>
   where
     T: Copy,
   {
@@ -180,11 +177,11 @@ impl ConsumerBuilder {
   }
 }
 
-pub struct Consumer<T, const MAX_CONSUMERS: usize>
+pub struct Consumer<T>
 where
   T: Copy,
 {
-  mmap_ptr: *mut ShmQueue<MAX_CONSUMERS>,
+  mmap_ptr: *mut ShmQueue,
   mmap_size: usize,
   #[cfg(not(feature = "no-consumer-heartbeat"))]
   id: usize,
@@ -198,7 +195,7 @@ where
   read_handle: BroadcastReadHandle<T>,
 }
 
-impl<T, const MAX_CONSUMERS: usize> Consumer<T, MAX_CONSUMERS>
+impl<T> Consumer<T>
 where
   T: Copy,
 {
@@ -212,7 +209,7 @@ where
     let queue_layout = BroadCastQueue::<T>::slot_layout();
 
     let fd = try_init_shared_memory(&name)?;
-    let (ptr, id) = try_attach_shared_memory::<T, _>(
+    let (ptr, id) = try_attach_shared_memory::<T>(
       fd,
       magic,
       version,
@@ -230,16 +227,14 @@ where
 
     let queue = unsafe {
       BroadCastQueue::from_raw_parts(
-        ptr
-          .byte_add(std::mem::size_of::<ShmQueue<MAX_CONSUMERS>>())
-          .byte_add((*ptr).header.queue_offset) as *mut u8,
+        ptr.byte_add((*ptr).header.queue_offset) as *mut u8,
         queue_layout.size * num_slots,
         &mut (*ptr).header.last_committed_slot,
       )?
     };
     let read_handle = BroadcastReadHandle::new(queue);
 
-    let mmap_size = std::mem::size_of::<ShmQueue<MAX_CONSUMERS>>()
+    let mmap_size = std::mem::size_of::<ShmQueue>()
       + unsafe { (*ptr).header.queue_offset }
       + queue_layout.size * num_slots;
 
@@ -306,7 +301,7 @@ where
   }
 }
 
-impl<T, const MAX_CONSUMERS: usize> Drop for Consumer<T, MAX_CONSUMERS>
+impl<T> Drop for Consumer<T>
 where
   T: Copy,
 {

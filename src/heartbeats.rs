@@ -4,9 +4,6 @@ use libc::pid_t;
 #[cfg(not(feature = "no-consumer-heartbeat"))]
 use std::sync::atomic::AtomicUsize;
 
-#[cfg(not(feature = "no-consumer-heartbeat"))]
-const INVALID_PID: pid_t = -1;
-
 #[repr(C)]
 pub struct ItemHeartbeat {
   pid: AtomicI32,
@@ -21,9 +18,10 @@ pub struct ConsumerHeartbeat {
 
 #[repr(C)]
 #[cfg(not(feature = "no-consumer-heartbeat"))]
-pub struct ConsumerHeartbeats<const MAX_CONSUMERS: usize> {
+pub struct ConsumerHeartbeatsMeta {
   pub prev_consumer: AtomicUsize,
-  pub consumers: [ConsumerHeartbeat; MAX_CONSUMERS],
+  pub buffer_offset: usize,
+  pub max_consumers: usize,
 }
 
 #[repr(C)]
@@ -32,10 +30,10 @@ pub struct ProducerHeartbeat {
 }
 
 #[repr(C)]
-pub struct Heartbeats<const MAX_CONSUMERS: usize> {
+pub struct Heartbeats {
   pub producer: ProducerHeartbeat,
   #[cfg(not(feature = "no-consumer-heartbeat"))]
-  pub consumers: ConsumerHeartbeats<MAX_CONSUMERS>,
+  pub consumers: ConsumerHeartbeatsMeta,
 }
 
 impl ItemHeartbeat {
@@ -75,13 +73,6 @@ impl ItemHeartbeat {
 
 #[cfg(not(feature = "no-consumer-heartbeat"))]
 impl ConsumerHeartbeat {
-  pub fn new(pid: pid_t) -> Self {
-    Self {
-      heartbeat: ItemHeartbeat::new(pid),
-      sequence: AtomicUsize::new(0),
-    }
-  }
-
   #[inline]
   pub fn get_heartbeat(&self) -> &ItemHeartbeat {
     &self.heartbeat
@@ -111,18 +102,29 @@ impl ConsumerHeartbeat {
 }
 
 #[cfg(not(feature = "no-consumer-heartbeat"))]
-impl<const MAX_CONSUMERS: usize> ConsumerHeartbeats<MAX_CONSUMERS> {
-  pub fn new() -> Self {
+impl ConsumerHeartbeatsMeta {
+  pub fn new(max_consumers: usize, buffer_offset: usize) -> Self {
     Self {
-      prev_consumer: AtomicUsize::new(MAX_CONSUMERS),
-      consumers: std::array::from_fn(|_| ConsumerHeartbeat::new(INVALID_PID)),
+      prev_consumer: AtomicUsize::new(max_consumers),
+      max_consumers,
+      buffer_offset,
+    }
+  }
+
+  #[inline]
+  unsafe fn get_buffer_item(&self, index: usize) -> *mut ConsumerHeartbeat {
+    unsafe {
+      ((self as *const Self as *const u8 as *mut u8).byte_add(self.buffer_offset)
+        as *mut ConsumerHeartbeat)
+        .add(index)
     }
   }
 
   pub fn new_consumer(&self, pid: pid_t, now: u64, tolerance: u64) -> Option<usize> {
-    for i in 0..MAX_CONSUMERS {
-      if self.consumers[i].try_reserve(now, tolerance) {
-        let heartbeat = self.consumers[i].get_heartbeat();
+    for i in 0..self.max_consumers {
+      let consumer = unsafe { &mut *self.get_buffer_item(i) };
+      if consumer.try_reserve(now, tolerance) {
+        let heartbeat = consumer.get_heartbeat();
         heartbeat.set_pid(pid);
         heartbeat.update(now);
         self.prev_consumer.store(i, Ordering::Release);
@@ -135,28 +137,35 @@ impl<const MAX_CONSUMERS: usize> ConsumerHeartbeats<MAX_CONSUMERS> {
 
   #[inline]
   pub fn drop_consumer(&self, id: usize) -> bool {
-    if id >= MAX_CONSUMERS {
+    if id >= self.max_consumers {
       return false;
     }
 
     // mark the slot stale
-    self.consumers[id].get_heartbeat().update(0);
+    unsafe { &*self.get_buffer_item(id) }
+      .get_heartbeat()
+      .update(0);
     true
   }
 
   #[inline]
   pub fn update_heartbeat(&self, id: usize, now: u64) {
-    if id >= MAX_CONSUMERS {
+    if id >= self.max_consumers {
       return;
     }
 
-    self.consumers[id].get_heartbeat().update(now);
+    unsafe { &*self.get_buffer_item(id) }
+      .get_heartbeat()
+      .update(now);
   }
 
   fn find_next_consumer(&self, now: u64, tolerance: u64) -> usize {
-    let mut ret = MAX_CONSUMERS;
-    for i in 0..MAX_CONSUMERS {
-      if self.consumers[i].get_heartbeat().is_alive(now, tolerance) {
+    let mut ret = self.max_consumers;
+    for i in 0..self.max_consumers {
+      if unsafe { &*self.get_buffer_item(i) }
+        .get_heartbeat()
+        .is_alive(now, tolerance)
+      {
         ret = i;
         break;
       }
@@ -169,9 +178,9 @@ impl<const MAX_CONSUMERS: usize> ConsumerHeartbeats<MAX_CONSUMERS> {
   pub fn is_any_consumer_alive(&self, now: u64, tolerance: u64) -> bool {
     let mut prev_consumer = self.prev_consumer.load(Ordering::Acquire);
 
-    while prev_consumer < MAX_CONSUMERS {
+    while prev_consumer < self.max_consumers {
       // this is the fast patb
-      if self.consumers[prev_consumer]
+      if unsafe { &*self.get_buffer_item(prev_consumer) }
         .get_heartbeat()
         .is_alive(now, tolerance)
       {

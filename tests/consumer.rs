@@ -48,10 +48,10 @@ fn main() {
     return;
   }
 
-  let mut consumer: Consumer<D, 64> = builder.unwrap();
+  let mut consumer: Consumer<D> = builder.unwrap();
   loop {
     #[cfg(feature = "no-heartbeats")]
-    let res = consumer.try_read();
+    let res = unsafe { consumer.try_read_zero_copy() };
     #[cfg(not(feature = "no-heartbeats"))]
     let res = unsafe { consumer.try_read_zero_copy(now()) };
     match res {
