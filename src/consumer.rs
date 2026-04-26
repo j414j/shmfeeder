@@ -124,6 +124,11 @@ where
   }
 }
 
+/// Builder for attaching a consumer to an existing shared-memory queue.
+///
+/// The producer must already have created the queue. Producer and consumer
+/// processes must agree on the queue name, payload type, magic number, and
+/// version.
 pub struct ConsumerBuilder {
   name: CString,
   magic: u64,
@@ -133,6 +138,10 @@ pub struct ConsumerBuilder {
 }
 
 impl ConsumerBuilder {
+  /// Creates a builder for a POSIX shared-memory object.
+  ///
+  /// `path` is passed to `shm_open` and should normally start with `/`, for
+  /// example `"/ticks"`.
   pub fn new(path: &str) -> ShmResult<Self> {
     let name = CString::from_str(path).map_err(|e| io::Error::other(e))?;
 
@@ -145,19 +154,30 @@ impl ConsumerBuilder {
     })
   }
 
+  /// Sets the application-defined magic number expected in the queue.
   pub fn with_magic(mut self, magic: u64) -> Self {
     self.magic = magic;
     self
   }
+  /// Sets the application-defined schema version expected in the queue.
   pub fn with_version(mut self, version: u64) -> Self {
     self.version = version;
     self
   }
   #[cfg(not(feature = "no-heartbeats"))]
+  /// Sets the producer liveness tolerance, in the same timestamp units passed to
+  /// [`ConsumerBuilder::build`] and read methods.
+  ///
+  /// The default is `1000`. If you pass microsecond timestamps, this means one
+  /// millisecond.
   pub fn with_liveness_tolerance(mut self, liveness_tolerance: u64) -> Self {
     self.liveness_tolerance = liveness_tolerance;
     self
   }
+  /// Attaches to the shared-memory queue as a consumer.
+  ///
+  /// When heartbeats are enabled, `now_timestamp` is used to validate the
+  /// producer heartbeat and register this consumer's own heartbeat.
   pub fn build<T>(
     self,
     #[cfg(not(feature = "no-heartbeats"))] now_timestamp: u64,
@@ -177,6 +197,10 @@ impl ConsumerBuilder {
   }
 }
 
+/// A reader attached to a shared-memory broadcast queue.
+///
+/// Each consumer keeps its own cursor. Slow consumers may miss items when the
+/// producer wraps the ring buffer and overwrites old slots.
 pub struct Consumer<T>
 where
   T: Copy,
@@ -255,12 +279,17 @@ where
   }
 
   #[inline]
-  /// SAFETY:
+  /// Attempts to read the next item by borrowing it directly from shared memory.
   ///
-  /// This returns a reference from the queue directly, this reference may
-  /// be overwritten by the producer at any point of time, WITHOUT any
-  /// synchronization. This method is to be used only when the operation
-  /// to perform on `T` is fast.
+  /// Returns [`ShmError::NoData`] when no newer slot is currently available.
+  ///
+  /// # Safety
+  ///
+  /// The returned reference points directly into the shared-memory ring buffer.
+  /// The producer may overwrite that slot at any time without synchronizing with
+  /// this reference. Use this only for very short operations where the producer
+  /// cannot practically lap the consumer, or prefer [`Consumer::try_read`] to
+  /// copy the value out.
   pub unsafe fn try_read_zero_copy(
     &mut self,
     #[cfg(not(feature = "no-heartbeats"))] now_timestamp: u64,
@@ -286,6 +315,9 @@ where
     unsafe { self.read_handle.try_read() }.ok_or(ShmError::NoData)
   }
   #[inline]
+  /// Attempts to read the next item by copying it out of shared memory.
+  ///
+  /// Returns [`ShmError::NoData`] when no newer slot is currently available.
   pub fn try_read(
     &mut self,
     #[cfg(not(feature = "no-heartbeats"))] now_timestamp: u64,

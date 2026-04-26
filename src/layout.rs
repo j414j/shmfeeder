@@ -28,13 +28,19 @@ pub struct ShmHeader {
 }
 
 #[repr(u8)]
-#[derive(Debug)]
+#[derive(Debug, Copy, Clone, Eq, PartialEq)]
+/// Lifecycle state stored in the shared-memory queue header.
 pub enum ShmState {
+  /// A producer is initializing the queue.
   Starting = 0,
+  /// The queue is ready for producers and consumers.
   Ready = 1,
+  /// The queue is being shut down.
   ShuttingDown = 2,
+  /// The queue memory has not been initialized.
   Uninit = 3,
 
+  /// The state byte did not match a known value.
   Invalid = 255,
 }
 

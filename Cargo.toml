@@ -2,6 +2,13 @@
 name = "shmfeeder"
 version = "0.1.0"
 edition = "2024"
+rust-version = "1.85"
+description = "A lock-free single-producer, multi-consumer broadcast ring buffer backed by POSIX shared memory."
+readme = "README.md"
+repository = "https://github.com/j414j/shmfeeder"
+license = "MIT OR Apache-2.0"
+keywords = ["shm", "ipc", "ring-buffer", "broadcast", "shared-memory"]
+categories = ["concurrency", "data-structures", "os::unix-apis"]
 
 [dependencies]
 libc = "0.2.185"

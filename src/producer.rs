@@ -4,9 +4,11 @@ use libc::ftruncate;
 
 #[cfg(not(feature = "no-heartbeats"))]
 use crate::heartbeats::ItemHeartbeat;
+#[cfg(debug_assertions)]
+use crate::layout::debug_print_shm;
 use crate::{
   error::{ShmError, ShmResult},
-  layout::{ShmQueue, ShmState, calculate_data_buffer_offset_queue_begin, debug_print_shm},
+  layout::{ShmQueue, ShmState, calculate_data_buffer_offset_queue_begin},
   queue::{BroadCastQueue, BroadcastWriteHandle},
 };
 #[cfg(not(feature = "no-consumer-heartbeat"))]
@@ -239,6 +241,11 @@ where
   Ok(ptr as *mut ShmQueue)
 }
 
+/// Builder for creating or taking over a named shared-memory producer queue.
+///
+/// The `num_slots` value passed to [`ProducerBuilder::new`] must be a non-zero
+/// power of two. Producer and consumer processes must agree on the queue name,
+/// payload type, magic number, and version.
 pub struct ProducerBuilder {
   name: CString,
   num_slots: usize,
@@ -251,6 +258,11 @@ pub struct ProducerBuilder {
 }
 
 impl ProducerBuilder {
+  /// Creates a builder for a POSIX shared-memory object.
+  ///
+  /// `path` is passed to `shm_open` and should normally start with `/`, for
+  /// example `"/ticks"`. `num_slots` is the ring-buffer length and must be a
+  /// power of two.
   pub fn new(path: &str, num_slots: usize) -> ShmResult<Self> {
     let name = CString::from_str(path).map_err(|e| io::Error::other(e))?;
 
@@ -266,27 +278,42 @@ impl ProducerBuilder {
     })
   }
 
+  /// Sets an application-defined magic number used to reject incompatible queues.
   pub fn with_magic(mut self, magic: u64) -> Self {
     self.magic = magic;
     self
   }
+  /// Sets an application-defined schema version used to reject incompatible queues.
   pub fn with_version(mut self, version: u64) -> Self {
     self.version = version;
     self
   }
 
   #[cfg(not(feature = "no-heartbeats"))]
+  /// Sets the liveness tolerance, in the same timestamp units passed to
+  /// [`ProducerBuilder::build`] and [`Producer::commit_next_slot`].
+  ///
+  /// The default is `1000`. If you pass microsecond timestamps, this means one
+  /// millisecond.
   pub fn with_liveness_tolerance(mut self, liveness_tolerance: u64) -> Self {
     self.liveness_tolerance = liveness_tolerance;
     self
   }
 
   #[cfg(not(feature = "no-consumer-heartbeat"))]
+  /// Sets the maximum number of concurrently attached consumers.
+  ///
+  /// The default is `32`.
   pub fn with_max_consumers(mut self, max_consumers: usize) -> Self {
     self.max_consumers = max_consumers;
     self
   }
 
+  /// Creates a producer and initializes or takes over the shared-memory queue.
+  ///
+  /// When heartbeats are enabled, `now_timestamp` is recorded as the initial
+  /// producer heartbeat. Use a monotonic or wall-clock timestamp consistently
+  /// across all producers and consumers.
   pub fn build<T>(
     self,
     #[cfg(not(feature = "no-heartbeats"))] now_timestamp: u64,
@@ -309,6 +336,11 @@ impl ProducerBuilder {
   }
 }
 
+/// A single writer for a shared-memory broadcast queue.
+///
+/// A producer reserves the next slot with [`Producer::get_next_buffer`], writes a
+/// fully initialized `T` into that pointer, and then publishes it with
+/// [`Producer::commit_next_slot`].
 pub struct Producer<T>
 where
   T: Copy,
@@ -382,6 +414,7 @@ where
       )?,
     };
 
+    #[cfg(debug_assertions)]
     debug_print_shm::<T>(unsafe { &*ptr });
 
     let queue = unsafe {
@@ -408,12 +441,22 @@ where
   }
 
   #[inline]
+  /// Returns a pointer to the next writable slot.
+  ///
+  /// Write exactly one initialized `T` into this pointer, then call
+  /// [`Producer::commit_next_slot`] to publish it. Calling this again before
+  /// committing overwrites the same pending slot.
   pub fn get_next_buffer(&mut self) -> *mut T {
     self.write_handle.get_next_buffer()
   }
 
   #[inline]
   #[cfg(not(feature = "no-heartbeats"))]
+  /// Publishes the slot returned by [`Producer::get_next_buffer`].
+  ///
+  /// `now_timestamp` is also used to refresh the producer heartbeat. Once enough
+  /// time has passed, the producer checks whether at least one consumer is still
+  /// alive and returns [`ShmError::NoActiveConsumer`] if none are.
   pub fn commit_next_slot(&mut self, now_timestamp: u64) -> ShmResult<()> {
     self.write_handle.commit_next_slot();
 
@@ -436,6 +479,7 @@ where
 
   #[inline]
   #[cfg(feature = "no-heartbeats")]
+  /// Publishes the slot returned by [`Producer::get_next_buffer`].
   pub fn commit_next_slot(&mut self) -> ShmResult<()> {
     self.write_handle.commit_next_slot();
     Ok(())
@@ -443,6 +487,7 @@ where
 
   #[inline]
   #[cfg(debug_assertions)]
+  /// Prints the shared-memory queue layout and contents for debugging.
   pub fn debug_print_queue(&self) {
     crate::layout::debug_print_shm::<T>(unsafe { &*self.mmap_ptr });
   }
