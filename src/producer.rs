@@ -336,8 +336,9 @@ impl ProducerBuilder {
 
 /// A single writer for a shared-memory broadcast queue.
 ///
-/// A producer reserves the next slot with [`Producer::get_next_buffer`], writes a
-/// fully initialized `T` into that pointer, and then publishes it with
+/// Use [`Producer::write`] for the safe path. For zero-copy writes, a producer
+/// can reserve the next slot with [`Producer::get_next_buffer`], write a fully
+/// initialized `T` into that pointer, and then publish it with
 /// [`Producer::commit_next_slot`].
 pub struct Producer<T>
 where
@@ -433,17 +434,44 @@ where
   /// Write exactly one initialized `T` into this pointer, then call
   /// [`Producer::commit_next_slot`] to publish it. Calling this again before
   /// committing overwrites the same pending slot.
-  pub fn get_next_buffer(&mut self) -> *mut T {
+  ///
+  /// # Safety
+  ///
+  /// The caller must write exactly one fully initialized `T` to the returned
+  /// pointer before publishing it with [`Producer::commit_next_slot`]. Calling
+  /// [`Producer::get_next_buffer`] again before committing may overwrite the
+  /// same pending slot.
+  pub unsafe fn get_next_buffer(&mut self) -> *mut T {
     self.write_handle.get_next_buffer()
   }
 
+  #[inline]
   /// Publishes the slot returned by [`Producer::get_next_buffer`].
   ///
   /// This does not update or check heartbeats. When heartbeat support is
   /// enabled, call `update_heartbeat` and `check_any_consumer_alive` on the
   /// cadence required by your application.
-  pub fn commit_next_slot(&mut self) {
+  ///
+  /// # Safety
+  ///
+  /// The pending slot must contain exactly one fully initialized `T`, written to
+  /// the pointer returned by [`Producer::get_next_buffer`].
+  pub unsafe fn commit_next_slot(&mut self) {
     self.write_handle.commit_next_slot();
+  }
+
+  #[inline]
+  /// Writes and publishes one value.
+  ///
+  /// This is the safe producer write API. It does not update or check
+  /// heartbeats. When heartbeat support is enabled, call `update_heartbeat` and
+  /// `check_any_consumer_alive` on the cadence required by your application.
+  pub fn write(&mut self, value: T) {
+    unsafe {
+      let buffer = self.get_next_buffer();
+      buffer.write(value);
+      self.commit_next_slot();
+    }
   }
 
   #[inline]

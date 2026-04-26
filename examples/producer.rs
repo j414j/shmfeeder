@@ -48,12 +48,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
       ask: 100.05 + sequence as f64 * 0.01,
     };
 
-    let slot = producer.get_next_buffer();
-    unsafe {
-      slot.write(quote);
-    }
-
-    producer.commit_next_slot();
+    producer.write(quote);
 
     #[cfg(not(feature = "no-heartbeats"))]
     producer.update_heartbeat(now_micros());

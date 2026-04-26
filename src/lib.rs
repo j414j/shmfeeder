@@ -69,14 +69,10 @@
 //! #[cfg(feature = "no-heartbeats")]
 //! let mut producer: Producer<Tick> = producer.build()?;
 //!
-//! let slot = producer.get_next_buffer();
-//! unsafe {
-//!   slot.write(Tick {
-//!     sequence: 1,
-//!     price: 101.25,
-//!   });
-//! }
-//! producer.commit_next_slot();
+//! producer.write(Tick {
+//!   sequence: 1,
+//!   price: 101.25,
+//! });
 //!
 //! #[cfg(not(feature = "no-heartbeats"))]
 //! producer.update_heartbeat(now_micros());

@@ -120,19 +120,19 @@ let mut producer: Producer<Tick> = ProducerBuilder::new("/shmfeeder-ticks", 1024
   .with_liveness_tolerance(2_000_000)
   .build(now_micros())?;
 
-let slot = producer.get_next_buffer();
-unsafe {
-  slot.write(Tick {
-    sequence: 1,
-    bid: 101.25,
-    ask: 101.30,
-  });
-}
-producer.commit_next_slot();
+producer.write(Tick {
+  sequence: 1,
+  bid: 101.25,
+  ask: 101.30,
+});
 producer.update_heartbeat(now_micros());
 producer.check_any_consumer_alive(now_micros())?;
 # Ok::<(), shmfeeder::ShmError>(())
 ```
+
+For zero-copy producer writes, use the unsafe
+`Producer::get_next_buffer`/`Producer::commit_next_slot` pair. The safe
+`Producer::write` method is preferred unless avoiding that value move matters.
 
 ## Consumer Example
 
